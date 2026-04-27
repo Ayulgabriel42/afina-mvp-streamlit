@@ -1,17 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-
 from src.loader import get_excel_sheets, load_financial_file
 from src.analyzer import analyze_financial_dataframe
 from src.normalizer import normalize_financial_dataframe
-from src.extractor import extract_financial_items
-from src.statement_mapper import (
-    NO_USAR,
-    STATEMENT_ROLES,
-    suggest_sheet_mapping,
-    calculate_mapping_completeness,
-)
 
 # =========================
 # Configuración general
@@ -279,38 +271,44 @@ st.markdown(
 # =========================
 # Estado de sesión
 # =========================
-DEFAULTS = {
-    "workbook_sheets": [],
-    "sheet_mapping": None,
-    "fpna_documents": None,
-    "fpna_context": None,
-    "mapping_completeness": None,
-    "financial_items": None,
-    "financial_items_summary": None,
-    "selected_industry": "Sector Químico",
-    "analysis_period": None,
-    "comparison_period": None,
-    "analysis_type": None,
-    "analysis_ready": False,
-    "current_section": "1. Nuevo análisis FP&A"
-}
+if "dataframe" not in st.session_state:
+    st.session_state.dataframe = None
 
-for key, value in DEFAULTS.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
+if "file_name" not in st.session_state:
+    st.session_state.file_name = None
 
-NAV_OPTIONS = [
-    "1. Nuevo análisis FP&A",
-    "2. Dashboard financiero",
-    "3. KPIs / Industria",
-    "4. Proyecciones",
-    "5. Chatbot AFINA",
-    "6. Informe",
-    "7. Admin básico"
-]
+if "selected_industry" not in st.session_state:
+    st.session_state.selected_industry = "Sector Químico"
 
-if st.session_state.current_section not in NAV_OPTIONS:
-    st.session_state.current_section = "1. Nuevo análisis FP&A"
+if "file_metadata" not in st.session_state:
+    st.session_state.file_metadata = None
+
+if "analysis_period" not in st.session_state:
+    st.session_state.analysis_period = None
+
+if "comparison_period" not in st.session_state:
+    st.session_state.comparison_period = None
+
+if "analysis_type" not in st.session_state:
+    st.session_state.analysis_type = None
+
+if "analysis_ready" not in st.session_state:
+    st.session_state.analysis_ready = False
+
+if "analysis_context" not in st.session_state:
+    st.session_state.analysis_context = None
+
+if "financial_analysis" not in st.session_state:
+    st.session_state.financial_analysis = None
+
+if "financial_normalization" not in st.session_state:
+    st.session_state.financial_normalization = None
+
+if "structure_validated" not in st.session_state:
+    st.session_state.structure_validated = False
+
+if "current_section" not in st.session_state:
+    st.session_state.current_section = "1. Nuevo análisis"
 
 # =========================
 # Opciones base
@@ -350,9 +348,7 @@ PERIODS = [
     "Primer Semestre 2023",
     "Año 2022",
     "Período 2021-2022",
-    "Año 2021",
-    "Año 2020",
-    "Año 2019"
+    "Año 2021"
 ]
 
 ANALYSIS_TYPES = [
@@ -456,51 +452,6 @@ def build_pie_chart():
 
     return fig
 
-
-def load_mapped_financial_documents(uploaded_file, mapping):
-    documents = {}
-
-    for role, sheet_name in mapping.items():
-        if sheet_name == NO_USAR:
-            continue
-
-        df, metadata = load_financial_file(uploaded_file, sheet_name=sheet_name)
-        analysis = analyze_financial_dataframe(df, metadata=metadata)
-        normalization = normalize_financial_dataframe(df)
-
-        documents[role] = {
-            "role_label": STATEMENT_ROLES[role],
-            "sheet_name": sheet_name,
-            "dataframe": df,
-            "metadata": metadata,
-            "analysis": analysis,
-            "normalization": normalization
-        }
-
-    return documents
-
-
-def documents_summary_table(documents):
-    rows = []
-
-    if not documents:
-        return pd.DataFrame()
-
-    for role, doc in documents.items():
-        metadata = doc["metadata"]
-        normalization = doc["normalization"]
-
-        rows.append({
-            "Bloque FP&A": doc["role_label"],
-            "Hoja seleccionada": doc["sheet_name"],
-            "Filas": metadata["rows"],
-            "Columnas": metadata["columns"],
-            "Filas normalizadas": normalization["rows_detected"],
-            "Estado técnico": normalization["status"]
-        })
-
-    return pd.DataFrame(rows)
-
 # =========================
 # Sidebar
 # =========================
@@ -520,7 +471,15 @@ with st.sidebar:
 
     section = st.radio(
         "Navegación",
-        NAV_OPTIONS,
+        [
+            "1. Nuevo análisis",
+            "2. Dashboard financiero",
+            "3. KPIs / Industria",
+            "4. Proyecciones",
+            "5. Chatbot AFINA",
+            "6. Informe",
+            "7. Admin básico"
+        ],
         key="current_section"
     )
 
@@ -528,27 +487,23 @@ with st.sidebar:
 
     if st.session_state.analysis_ready:
         st.success("Análisis activo")
+        st.caption(st.session_state.file_name)
         st.caption(f"Período: {st.session_state.analysis_period}")
         st.caption(f"Industria: {st.session_state.selected_industry}")
-
-        if st.session_state.mapping_completeness:
-            st.caption(f"Mapeo: {st.session_state.mapping_completeness['status']}")
     else:
         st.info("Sin análisis activo")
 
     st.caption("AFINA MVP · GOBLEXA")
 
 # =========================
-# 1. Nuevo análisis FP&A
+# 1. Nuevo análisis
 # =========================
-if section == "1. Nuevo análisis FP&A":
+if section == "1. Nuevo análisis":
     st.markdown(
         """
         <div class="hero-card">
-            <div class="hero-title">Nuevo Análisis FP&A</div>
-            <div class="hero-subtitle">
-                Cargá el archivo financiero y confirmá qué hoja representa cada estado contable para generar el contexto del análisis.
-            </div>
+            <div class="hero-title">Nuevo Análisis Financiero</div>
+            <div class="hero-subtitle">Cargá un archivo, elegí hoja, período, tipo de análisis e industria para preparar el contexto de AFINA.</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -557,8 +512,8 @@ if section == "1. Nuevo análisis FP&A":
     st.markdown(
         """
         <div class="workflow-box">
-            <strong>Flujo profesional del análisis:</strong><br>
-            1. Subir archivo → 2. Detectar hojas → 3. Mapear estados financieros → 4. Elegir período e industria → 5. Generar análisis FP&A
+            <strong>Flujo del análisis:</strong><br>
+            1. Subir archivo financiero → 2. Elegir hoja → 3. Elegir período → 4. Elegir tipo de análisis → 5. Procesar análisis
         </div>
         """,
         unsafe_allow_html=True
@@ -569,207 +524,135 @@ if section == "1. Nuevo análisis FP&A":
         type=["xlsx", "csv"]
     )
 
-    sheet_names = []
-    suggested_mapping = {}
+    selected_sheet = None
 
     if uploaded_file is not None:
         file_name_lower = uploaded_file.name.lower()
 
         if file_name_lower.endswith(".xlsx"):
-            sheet_names = get_excel_sheets(uploaded_file)
-            st.session_state.workbook_sheets = sheet_names
+            sheets = get_excel_sheets(uploaded_file)
+
+            if sheets:
+                selected_sheet = st.selectbox(
+                    "2. Seleccioná la hoja del Excel a procesar",
+                    sheets
+                )
+                st.caption(f"Hojas detectadas: {', '.join(sheets)}")
+            else:
+                st.warning("No se pudieron detectar hojas en el archivo Excel.")
+
+        elif file_name_lower.endswith(".csv"):
+            st.info("Archivo CSV detectado. No requiere selección de hoja.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        selected_period = st.selectbox(
+            "3. Seleccioná el período a analizar",
+            PERIODS,
+            index=PERIODS.index("Año 2024")
+        )
+
+    with col2:
+        selected_analysis_type = st.radio(
+            "4. Tipo de análisis",
+            ANALYSIS_TYPES,
+            horizontal=True
+        )
+
+    selected_comparison_period = None
+
+    if selected_analysis_type == "Comparativo":
+        selected_comparison_period = st.selectbox(
+            "Período de comparación",
+            [period for period in PERIODS if period != selected_period],
+            index=0
+        )
+
+    selected_industry = st.selectbox(
+        "5. Industria / sector económico",
+        INDUSTRIES,
+        index=INDUSTRIES.index(st.session_state.selected_industry)
+    )
+
+    st.session_state.selected_industry = selected_industry
+
+    can_process = uploaded_file is not None
+
+    if uploaded_file is not None and uploaded_file.name.lower().endswith(".xlsx") and selected_sheet is None:
+        can_process = False
+
+    st.write("")
+
+    if st.button("Procesar análisis", type="primary", disabled=not can_process):
+        try:
+            df, metadata = load_financial_file(
+                uploaded_file,
+                sheet_name=selected_sheet
+            )
+
+            st.session_state.dataframe = df
+            st.session_state.file_name = metadata["file_name"]
+            st.session_state.file_metadata = metadata
+            st.session_state.analysis_period = selected_period
+            st.session_state.comparison_period = selected_comparison_period
+            st.session_state.analysis_type = selected_analysis_type
+            st.session_state.analysis_ready = True
+
+            st.session_state.analysis_context = {
+                "file_name": metadata["file_name"],
+                "file_type": metadata["file_type"],
+                "sheet_name": metadata["sheet_name"],
+                "rows": metadata["rows"],
+                "columns": metadata["columns"],
+                "period": selected_period,
+                "comparison_period": selected_comparison_period,
+                "analysis_type": selected_analysis_type,
+                "industry": selected_industry,
+                "column_names": metadata["column_names"]
+            }
+
+            # Preanálisis financiero inicial
+            st.session_state.financial_analysis = analyze_financial_dataframe(
+                df,
+                metadata=metadata
+            )
+
+            # Normalización financiera inicial
+            st.session_state.financial_normalization = normalize_financial_dataframe(df)
 
             st.markdown(
-                f"""
+                """
                 <div class="success-box">
-                    <strong>Archivo Excel detectado correctamente.</strong><br>
-                    AFINA encontró <strong>{len(sheet_names)}</strong> hojas disponibles.
+                    <strong>Análisis preparado correctamente.</strong><br>
+                    Los datos quedaron cargados como contexto principal para Dashboard, KPIs, Proyecciones, Chatbot e Informe.
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
-            st.write("Hojas detectadas:")
-            st.write(", ".join(sheet_names))
+        except Exception:
+            st.error("No se pudo procesar el archivo.")
+            st.write("Revisá que sea un Excel o CSV válido y que la hoja seleccionada tenga datos.")
 
-            suggested_mapping = suggest_sheet_mapping(sheet_names)
+    if not can_process:
+        st.caption("Para procesar, primero subí un archivo válido.")
 
-        elif file_name_lower.endswith(".csv"):
-            sheet_names = ["Archivo CSV"]
-            st.session_state.workbook_sheets = sheet_names
-            suggested_mapping = {
-                "balance": NO_USAR,
-                "pnl": NO_USAR,
-                "cashflow": NO_USAR,
-                "ratios": NO_USAR,
-                "database": "Archivo CSV"
-            }
+    if st.session_state.analysis_ready and st.session_state.analysis_context is not None:
+        context = st.session_state.analysis_context
 
-            st.info("Archivo CSV detectado. Se mapeará como base contable auxiliar.")
-
-    if uploaded_file is not None:
-        section_header(
-            "2. Mapeo de estados financieros",
-            "Confirmá qué hoja corresponde a cada bloque del análisis FP&A."
-        )
-
-        sheet_options = [NO_USAR] + sheet_names
-        mapping = {}
-
-        col1, col2 = st.columns(2)
-        roles = list(STATEMENT_ROLES.keys())
-
-        for index, role in enumerate(roles):
-            suggested_sheet = suggested_mapping.get(role, NO_USAR)
-            default_index = sheet_options.index(suggested_sheet) if suggested_sheet in sheet_options else 0
-
-            target_col = col1 if index % 2 == 0 else col2
-
-            with target_col:
-                mapping[role] = st.selectbox(
-                    STATEMENT_ROLES[role],
-                    sheet_options,
-                    index=default_index,
-                    key=f"mapping_{role}"
-                )
-
-        completeness = calculate_mapping_completeness(mapping)
-
-        if completeness["score"] >= 90:
-            score_color = "green"
-            score_dot = "green"
-        elif completeness["score"] >= 60:
-            score_color = "yellow"
-            score_dot = "yellow"
-        else:
-            score_color = "red"
-            score_dot = "red"
-
-        st.subheader("Calidad del mapeo FP&A")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            kpi_card("Completitud", f"{completeness['score']}%", completeness["status"], score_color, score_dot)
-        with col2:
-            kpi_card("Estados clave", completeness["required_done"], "Balance + Resultados + Flujo", "blue", "blue")
-        with col3:
-            kpi_card("Bloques opcionales", completeness["optional_done"], "Ratios + Base auxiliar", "yellow", "yellow")
-
-        st.markdown(
-            f"""
-            <div class="info-box">
-                <strong>Lectura FP&A:</strong><br>
-                {completeness["detail"]}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            selected_period = st.selectbox(
-                "3. Seleccioná el período principal a analizar",
-                PERIODS,
-                index=PERIODS.index("Año 2022")
-            )
-
-        with col2:
-            selected_analysis_type = st.radio(
-                "4. Tipo de análisis",
-                ANALYSIS_TYPES,
-                horizontal=True
-            )
-
-        selected_comparison_period = None
-
-        if selected_analysis_type == "Comparativo":
-            comparison_options = [period for period in PERIODS if period != selected_period]
-            selected_comparison_period = st.selectbox(
-                "Período de comparación",
-                comparison_options,
-                index=comparison_options.index("Año 2023") if "Año 2023" in comparison_options else 0
-            )
-
-        selected_industry = st.selectbox(
-            "5. Industria / sector económico",
-            INDUSTRIES,
-            index=INDUSTRIES.index(st.session_state.selected_industry)
-        )
-
-        st.session_state.selected_industry = selected_industry
-
-        can_process = uploaded_file is not None and any(
-            sheet != NO_USAR for sheet in mapping.values()
-        )
-
-        st.write("")
-
-        if st.button("Generar análisis FP&A", type="primary", disabled=not can_process):
-            try:
-                documents = load_mapped_financial_documents(uploaded_file, mapping)
-                financial_items, financial_items_summary = extract_financial_items(documents)
-
-                st.session_state.sheet_mapping = mapping
-                st.session_state.fpna_documents = documents
-                st.session_state.financial_items = financial_items
-                st.session_state.financial_items_summary = financial_items_summary
-                st.session_state.mapping_completeness = completeness
-                st.session_state.analysis_period = selected_period
-                st.session_state.comparison_period = selected_comparison_period
-                st.session_state.analysis_type = selected_analysis_type
-                st.session_state.analysis_ready = True
-
-                st.session_state.fpna_context = {
-                    "file_name": uploaded_file.name,
-                    "period": selected_period,
-                    "comparison_period": selected_comparison_period,
-                    "analysis_type": selected_analysis_type,
-                    "industry": selected_industry,
-                    "mapping": mapping,
-                    "completeness": completeness,
-                    "documents_summary": documents_summary_table(documents).to_dict(orient="records"),
-                    "financial_items_summary": financial_items_summary
-                }
-
-                st.markdown(
-                    """
-                    <div class="success-box">
-                        <strong>Análisis FP&A preparado correctamente.</strong><br>
-                        AFINA ya tiene mapeados los estados financieros y el contexto base para Dashboard, KPIs, IA e Informe.
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-            except Exception as e:
-                st.error("No se pudo generar el análisis FP&A.")
-                st.write("Revisá el archivo, las hojas seleccionadas o intentá mapear menos bloques.")
-                st.caption(str(e))
-
-        if not can_process:
-            st.caption("Para generar el análisis, seleccioná al menos una hoja en el mapeo FP&A.")
-
-    if st.session_state.analysis_ready and st.session_state.fpna_documents is not None:
-        section_header(
-            "Resumen del análisis activo",
-            "AFINA preparó el archivo como insumo financiero para el análisis ejecutivo."
-        )
-
-        context = st.session_state.fpna_context
-        completeness = st.session_state.mapping_completeness
+        st.subheader("Resumen del análisis activo")
 
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             kpi_card("Archivo", context["file_name"], "Archivo cargado", "blue", "green")
         with col2:
-            kpi_card("Período", context["period"], "Período principal", "green", "green")
+            kpi_card("Período", context["period"], "Período seleccionado", "green", "green")
         with col3:
             kpi_card("Tipo", context["analysis_type"], "Modo de análisis", "blue", "green")
         with col4:
-            kpi_card("Mapeo", completeness["status"], "Calidad FP&A", "yellow", "yellow")
+            kpi_card("Industria", context["industry"], "Sector seleccionado", "yellow", "yellow")
 
         if context["comparison_period"]:
             st.markdown(
@@ -781,69 +664,186 @@ if section == "1. Nuevo análisis FP&A":
                 unsafe_allow_html=True
             )
 
-        st.subheader("Estados financieros mapeados")
-        summary_df = documents_summary_table(st.session_state.fpna_documents)
-        st.dataframe(summary_df, width="stretch")
+        st.subheader("Datos detectados")
 
-        if st.session_state.financial_items_summary is not None:
-            items_summary = st.session_state.financial_items_summary
+        col1, col2, col3, col4 = st.columns(4)
 
-            section_header(
-                "Partidas financieras clave detectadas",
-                "AFINA buscó cuentas e indicadores base para preparar KPIs, diagnóstico e informe ejecutivo."
-            )
+        with col1:
+            kpi_card("Tipo archivo", context["file_type"], "Formato procesado", "blue", "green")
+        with col2:
+            kpi_card("Hoja", context["sheet_name"] or "No aplica", "Hoja procesada", "green", "green")
+        with col3:
+            kpi_card("Filas", context["rows"], "Registros detectados", "blue", "green")
+        with col4:
+            kpi_card("Columnas", context["columns"], "Campos detectados", "blue", "green")
 
-            if items_summary["coverage"] >= 75:
-                items_color = "green"
-                items_dot = "green"
-            elif items_summary["coverage"] >= 45:
-                items_color = "yellow"
-                items_dot = "yellow"
-            else:
-                items_color = "red"
-                items_dot = "red"
+        st.subheader("Columnas detectadas")
+        st.write(", ".join([str(col) for col in context["column_names"]]))
 
-            col1, col2, col3, col4 = st.columns(4)
+        st.subheader("Vista previa del archivo")
+        st.dataframe(st.session_state.dataframe.head(20), width="stretch")
+
+        if st.session_state.financial_analysis is not None:
+            analysis = st.session_state.financial_analysis
+
+            st.subheader("Preanálisis generado")
+
+            col1, col2, col3 = st.columns(3)
 
             with col1:
-                kpi_card("Cobertura", f"{items_summary['coverage']}%", items_summary["status"], items_color, items_dot)
+                kpi_card("Score detección", f"{analysis['detection_score']}%", analysis["status"], "blue", "green")
             with col2:
-                kpi_card("Detectadas", items_summary["detected_items"], "Partidas encontradas", "green", "green")
+                kpi_card("Coincidencias", analysis["total_matches"], "Partidas encontradas", "green", "green")
             with col3:
-                kpi_card("Pendientes", items_summary["missing_items"], "Partidas no detectadas", "yellow", "yellow")
-            with col4:
-                kpi_card("Total buscadas", items_summary["total_items"], "Partidas FP&A", "blue", "blue")
+                kpi_card("Categorías", len(analysis["detected_categories"]), "Grupos detectados", "yellow", "yellow")
+
+        if st.session_state.financial_normalization is not None:
+            normalization = st.session_state.financial_normalization
+            normalized_df = normalization["normalized_df"]
+
+            st.subheader("Tabla financiera normalizada")
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                kpi_card(
+                    "Cuentas normalizadas",
+                    normalization["rows_detected"],
+                    "Filas financieras detectadas",
+                    "green" if normalization["rows_detected"] > 0 else "red",
+                    "green" if normalization["rows_detected"] > 0 else "red"
+                )
+
+            with col2:
+                kpi_card(
+                    "Columna cuenta",
+                    str(normalization["account_column"]),
+                    "Cuenta contable probable",
+                    "blue",
+                    "blue"
+                )
+
+            with col3:
+                kpi_card(
+                    "Columnas valor",
+                    len(normalization["value_columns"]),
+                    "Columnas numéricas detectadas",
+                    "yellow",
+                    "yellow"
+                )
 
             st.markdown(
                 f"""
                 <div class="info-box">
-                    <strong>Lectura preliminar:</strong><br>
-                    {items_summary["detail"]}
+                    <strong>Resultado de normalización:</strong><br>
+                    {normalization["status"]}
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
-            if st.session_state.financial_items is not None:
-                detected_items_df = st.session_state.financial_items[
-                    st.session_state.financial_items["Estado"] == "Detectada"
-                ]
+            if normalization["warnings"]:
+                st.subheader("Observaciones de normalización")
+                for warning in normalization["warnings"]:
+                    st.warning(warning)
 
-                st.dataframe(detected_items_df, width="stretch")
+            if not normalized_df.empty:
+                st.dataframe(normalized_df.head(30), width="stretch")
+            else:
+                st.warning("No se pudo generar una tabla financiera normalizada.")
 
-        with st.expander("Detalle técnico para desarrollo"):
-            for role, doc in st.session_state.fpna_documents.items():
-                st.markdown(f"### {doc['role_label']} — {doc['sheet_name']}")
-                st.write("Columnas detectadas:")
-                st.write(", ".join([str(col) for col in doc["metadata"]["column_names"]]))
+        if st.session_state.financial_normalization is not None and st.session_state.dataframe is not None:
+            st.subheader("Validación de estructura detectada")
 
-                normalized_df = doc["normalization"]["normalized_df"]
+            normalization = st.session_state.financial_normalization
+            df_current = st.session_state.dataframe
+            available_columns = list(df_current.columns)
 
-                if not normalized_df.empty:
-                    st.write("Vista normalizada:")
-                    st.dataframe(normalized_df.head(20), width="stretch")
-                else:
-                    st.warning("No se pudo normalizar esta hoja.")
+            st.markdown(
+                """
+                <div class="info-box">
+                    <strong>Validación previa al análisis:</strong><br>
+                    Revisá si AFINA detectó correctamente la columna de cuenta, código contable y columnas de valores.
+                    Si no está correcto, podés corregirlo manualmente antes de continuar.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            detected_account_col = normalization.get("account_column")
+            detected_code_col = normalization.get("code_column")
+            detected_value_columns = normalization.get("value_columns", [])
+
+            account_index = 0
+            if detected_account_col in available_columns:
+                account_index = available_columns.index(detected_account_col)
+
+            selected_account_col = st.selectbox(
+                "Columna de cuenta / descripción contable",
+                available_columns,
+                index=account_index,
+                key="manual_account_col"
+            )
+
+            code_options = ["No usar código"] + available_columns
+
+            code_index = 0
+            if detected_code_col in available_columns:
+                code_index = code_options.index(detected_code_col)
+
+            selected_code_col = st.selectbox(
+                "Columna de código contable",
+                code_options,
+                index=code_index,
+                key="manual_code_col"
+            )
+
+            default_value_columns = [
+                col for col in detected_value_columns
+                if col in available_columns
+            ]
+
+            selected_value_columns = st.multiselect(
+                "Columnas de valores financieros",
+                available_columns,
+                default=default_value_columns,
+                key="manual_value_columns"
+            )
+
+            if st.button("Confirmar estructura detectada", type="primary"):
+                code_col_to_use = None if selected_code_col == "No usar código" else selected_code_col
+
+                st.session_state.financial_normalization = normalize_financial_dataframe(
+                    df_current,
+                    account_col=selected_account_col,
+                    code_col=code_col_to_use,
+                    value_columns=selected_value_columns
+                )
+
+                st.session_state.structure_validated = True
+
+                st.success("Estructura validada correctamente. Ya podés avanzar al Dashboard financiero.")
+
+            if st.session_state.structure_validated:
+                st.markdown(
+                    """
+                    <div class="success-box">
+                        <strong>Estructura validada:</strong><br>
+                        La tabla financiera normalizada quedó confirmada para alimentar el Dashboard, KPIs, IA e Informe.
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    """
+                    <div class="warning-box">
+                        <strong>Estructura pendiente de validación:</strong><br>
+                        Recomendado confirmar la estructura antes de avanzar al Dashboard.
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
         st.button(
             "Ir al Dashboard financiero",
@@ -870,23 +870,22 @@ elif section == "2. Dashboard financiero":
         st.markdown(
             """
             <div class="warning-box">
-                <strong>No hay análisis FP&A activo.</strong><br>
-                Primero cargá un archivo y confirmá el mapeo de estados financieros.
+                <strong>No hay análisis activo.</strong><br>
+                Primero iniciá un nuevo análisis financiero cargando un archivo y seleccionando período, tipo de análisis e industria.
             </div>
             """,
             unsafe_allow_html=True
         )
 
         st.button(
-            "Iniciar nuevo análisis FP&A",
+            "Iniciar nuevo análisis",
             type="primary",
             on_click=go_to,
-            args=("1. Nuevo análisis FP&A",)
+            args=("1. Nuevo análisis",)
         )
 
     else:
-        context = st.session_state.fpna_context
-        completeness = st.session_state.mapping_completeness
+        context = st.session_state.analysis_context
 
         st.markdown(
             f"""
@@ -898,52 +897,126 @@ elif section == "2. Dashboard financiero":
             unsafe_allow_html=True
         )
 
-        section_header(
-            "Base FP&A preparada",
-            "AFINA ya cuenta con los estados financieros mapeados para comenzar el cálculo de indicadores."
-        )
+        analysis = st.session_state.financial_analysis
 
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            kpi_card(
-                "Completitud FP&A",
-                f"{completeness['score']}%",
-                completeness["status"],
-                "green" if completeness["score"] >= 90 else "yellow",
-                "green" if completeness["score"] >= 90 else "yellow"
+        if analysis is not None:
+            section_header(
+                "Preanálisis financiero detectado",
+                "AFINA realizó una primera lectura del archivo para identificar partidas financieras y calidad de datos."
             )
-        with col2:
-            kpi_card("Estados cargados", len(st.session_state.fpna_documents), "Bloques financieros disponibles", "blue", "blue")
-        with col3:
-            kpi_card("Industria", context["industry"], "Umbrales futuros", "yellow", "yellow")
-        with col4:
-            kpi_card("Estado", "Preparado", "Listo para motor KPI", "green", "green")
 
-        st.subheader("Fuentes utilizadas por AFINA")
-        st.dataframe(documents_summary_table(st.session_state.fpna_documents), width="stretch")
+            score = analysis["detection_score"]
+            total_matches = analysis["total_matches"]
+            detected_categories = analysis["detected_categories"]
+            quality = analysis["quality"]
 
-        if st.session_state.financial_items_summary is not None:
-            items_summary = st.session_state.financial_items_summary
+            if score >= 70:
+                score_color = "green"
+                score_dot = "green"
+            elif score >= 40:
+                score_color = "yellow"
+                score_dot = "yellow"
+            else:
+                score_color = "red"
+                score_dot = "red"
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                kpi_card("Score de detección", f"{score}%", analysis["status"], score_color, score_dot)
+            with col2:
+                kpi_card("Coincidencias", total_matches, "Partidas financieras encontradas", "blue", "blue")
+            with col3:
+                kpi_card("Categorías", len(detected_categories), "Grupos financieros detectados", "green", "green")
+            with col4:
+                kpi_card("Celdas vacías", f"{quality['empty_percentage']}%", "Calidad estructural del archivo", "yellow", "yellow")
+
+            st.markdown(
+                f"""
+                <div class="info-box">
+                    <strong>Diagnóstico inicial:</strong><br>
+                    {analysis["status_detail"]}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if detected_categories:
+                st.subheader("Categorías financieras detectadas")
+                st.write(", ".join(detected_categories))
+
+            if quality["warnings"]:
+                st.subheader("Alertas de calidad de datos")
+                for warning in quality["warnings"]:
+                    st.warning(warning)
+
+            detection_rows = []
+
+            for category, data in analysis["detections"].items():
+                for match in data["matches"]:
+                    detection_rows.append({
+                        "Categoría": category,
+                        "Fila": match["fila"],
+                        "Coincidencia": match["coincidencia"],
+                        "Detalle detectado": match["detalle"]
+                    })
+
+            if detection_rows:
+                st.subheader("Ejemplos de cuentas detectadas")
+                st.dataframe(pd.DataFrame(detection_rows), width="stretch")
+
+        if st.session_state.financial_normalization is not None:
+            normalization = st.session_state.financial_normalization
+            normalized_df = normalization["normalized_df"]
 
             section_header(
-                "Partidas base para KPIs",
-                "Resumen de las cuentas e indicadores que AFINA logró identificar automáticamente."
+                "Estructura financiera normalizada",
+                "AFINA reorganizó el archivo en una tabla más apta para análisis y cálculo de KPIs."
             )
 
             col1, col2, col3, col4 = st.columns(4)
 
             with col1:
-                kpi_card("Cobertura partidas", f"{items_summary['coverage']}%", items_summary["status"], "green" if items_summary["coverage"] >= 75 else "yellow", "green" if items_summary["coverage"] >= 75 else "yellow")
-            with col2:
-                kpi_card("Detectadas", items_summary["detected_items"], "Partidas FP&A", "green", "green")
-            with col3:
-                kpi_card("Pendientes", items_summary["missing_items"], "Requieren revisión", "yellow", "yellow")
-            with col4:
-                kpi_card("Listo KPI", "Parcial", "Motor en próxima etapa", "blue", "blue")
+                kpi_card(
+                    "Cuentas",
+                    normalization["rows_detected"],
+                    "Cuentas normalizadas",
+                    "green" if normalization["rows_detected"] > 0 else "red",
+                    "green" if normalization["rows_detected"] > 0 else "red"
+                )
 
-            if st.session_state.financial_items is not None:
-                st.dataframe(st.session_state.financial_items, width="stretch")
+            with col2:
+                kpi_card(
+                    "Cuenta base",
+                    str(normalization["account_column"]),
+                    "Columna detectada",
+                    "blue",
+                    "blue"
+                )
+
+            with col3:
+                kpi_card(
+                    "Código",
+                    str(normalization["code_column"] or "No detectado"),
+                    "Código contable probable",
+                    "yellow",
+                    "yellow"
+                )
+
+            with col4:
+                kpi_card(
+                    "Valores",
+                    len(normalization["value_columns"]),
+                    "Columnas numéricas",
+                    "blue",
+                    "blue"
+                )
+
+            if not normalized_df.empty:
+                st.subheader("Vista normalizada")
+                st.dataframe(normalized_df.head(20), width="stretch")
+
+        st.write("")
 
         section_header(
             "KPIs demostrativos",
@@ -977,20 +1050,28 @@ elif section == "2. Dashboard financiero":
             )
             st.plotly_chart(build_pie_chart(), width="stretch")
 
+        section_header("Acciones rápidas", "Accesos principales para completar el flujo de demo.")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            action_card("📤", "Nuevo análisis", "Cargar otro archivo o período financiero.")
+        with col2:
+            action_card("🤖", "Consultar AFINA", "Preguntar causas, riesgos y recomendaciones al chatbot.")
+        with col3:
+            action_card("📄", "Generar informe", "Descargar un reporte ejecutivo en PDF o Word.")
+
 # =========================
 # 3. KPIs / Industria
 # =========================
 elif section == "3. KPIs / Industria":
-    section_header(
-        "KPIs / Industria",
-        "Selección de industria y preparación de semáforos financieros."
-    )
+    section_header("KPIs / Análisis por industria", "Selección de industria y preparación de semáforos financieros.")
 
     if not st.session_state.analysis_ready:
         st.markdown(
             """
             <div class="warning-box">
-                Primero debés preparar un análisis FP&A.
+                Primero debés preparar un nuevo análisis para calcular KPIs.
             </div>
             """,
             unsafe_allow_html=True
@@ -1003,13 +1084,13 @@ elif section == "3. KPIs / Industria":
         )
 
         st.session_state.selected_industry = industry
-        st.session_state.fpna_context["industry"] = industry
+        st.session_state.analysis_context["industry"] = industry
 
         st.markdown(
             f"""
             <div class="success-box">
                 <strong>Industria seleccionada:</strong> {industry}<br>
-                En la siguiente etapa, esta selección recalculará los semáforos de los KPIs.
+                En la siguiente etapa, esta selección recalculará los semáforos de los indicadores.
             </div>
             """,
             unsafe_allow_html=True
@@ -1024,23 +1105,26 @@ elif section == "3. KPIs / Industria":
         with col3:
             action_card("🏭", "Manufactura", "Activos, inventario, costos y rentabilidad.")
 
-        st.subheader("Estados disponibles para KPIs")
-        st.dataframe(documents_summary_table(st.session_state.fpna_documents), width="stretch")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            action_card("🛒", "Retail / Comercio", "Rotación, liquidez, inventario y caja.")
+        with col2:
+            action_card("💊", "Salud / Farmacia", "Stock, flujo operativo y estructura financiera.")
+        with col3:
+            action_card("🏦", "Servicios Financieros", "Riesgo, capital y rentabilidad.")
 
 # =========================
 # 4. Proyecciones
 # =========================
 elif section == "4. Proyecciones":
-    section_header(
-        "Proyecciones financieras",
-        "Simulación inicial de escenarios para flujo de caja."
-    )
+    section_header("Proyecciones financieras", "Simulación inicial de escenarios para flujo de caja.")
 
     if not st.session_state.analysis_ready:
         st.markdown(
             """
             <div class="warning-box">
-                Primero debés preparar un análisis FP&A.
+                Primero debés preparar un nuevo análisis para generar proyecciones.
             </div>
             """,
             unsafe_allow_html=True
@@ -1075,22 +1159,19 @@ elif section == "4. Proyecciones":
 # 5. Chatbot AFINA
 # =========================
 elif section == "5. Chatbot AFINA":
-    section_header(
-        "Chatbot AFINA",
-        "Asistente financiero contextualizado sobre los estados cargados."
-    )
+    section_header("Chatbot AFINA", "Asistente financiero contextualizado sobre los datos cargados.")
 
     if not st.session_state.analysis_ready:
         st.markdown(
             """
             <div class="warning-box">
-                Primero debés preparar un análisis FP&A para que el chatbot tenga contexto financiero.
+                Primero debés preparar un nuevo análisis para que el chatbot tenga contexto financiero.
             </div>
             """,
             unsafe_allow_html=True
         )
     else:
-        context = st.session_state.fpna_context
+        context = st.session_state.analysis_context
 
         st.markdown(
             f"""
@@ -1099,8 +1180,7 @@ elif section == "5. Chatbot AFINA":
                 Archivo: {context["file_name"]}<br>
                 Período: {context["period"]}<br>
                 Tipo de análisis: {context["analysis_type"]}<br>
-                Industria: {context["industry"]}<br>
-                Estados mapeados: {len(st.session_state.fpna_documents)}
+                Industria: {context["industry"]}
             </div>
             """,
             unsafe_allow_html=True
@@ -1116,8 +1196,8 @@ elif section == "5. Chatbot AFINA":
                 """
                 <div class="info-box">
                     <strong>Respuesta provisoria:</strong><br><br>
-                    En la siguiente etapa, AFINA responderá usando los estados financieros mapeados,
-                    KPIs calculados, industria seleccionada y período analizado.
+                    En la siguiente etapa, AFINA responderá usando los KPIs calculados,
+                    la industria seleccionada, el período analizado y el contexto del archivo cargado.
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -1127,22 +1207,19 @@ elif section == "5. Chatbot AFINA":
 # 6. Informe
 # =========================
 elif section == "6. Informe":
-    section_header(
-        "Informe financiero",
-        "Generación de reportes ejecutivos descargables."
-    )
+    section_header("Informe financiero", "Generación de reportes ejecutivos descargables.")
 
     if not st.session_state.analysis_ready:
         st.markdown(
             """
             <div class="warning-box">
-                Primero debés preparar un análisis FP&A para generar el informe.
+                Primero debés preparar un nuevo análisis para generar el informe.
             </div>
             """,
             unsafe_allow_html=True
         )
     else:
-        context = st.session_state.fpna_context
+        context = st.session_state.analysis_context
 
         st.markdown(
             f"""
@@ -1150,8 +1227,7 @@ elif section == "6. Informe":
                 <strong>Informe listo para etapa de generación:</strong><br>
                 Archivo: {context["file_name"]}<br>
                 Período: {context["period"]}<br>
-                Industria: {context["industry"]}<br>
-                Estados financieros mapeados: {len(st.session_state.fpna_documents)}
+                Industria: {context["industry"]}
             </div>
             """,
             unsafe_allow_html=True
@@ -1168,10 +1244,7 @@ elif section == "6. Informe":
 # 7. Admin básico
 # =========================
 elif section == "7. Admin básico":
-    section_header(
-        "Admin básico",
-        "Panel inicial para configuración y control del MVP."
-    )
+    section_header("Admin básico", "Panel inicial para configuración y control del MVP.")
 
     col1, col2, col3 = st.columns(3)
 
