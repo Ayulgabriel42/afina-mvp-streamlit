@@ -501,6 +501,69 @@ def documents_summary_table(documents):
 
     return pd.DataFrame(rows)
 
+
+def render_financial_items_section():
+    if st.session_state.financial_items is None:
+        return
+
+    section_header(
+        "Partidas FP&A para cálculo de KPIs",
+        "Listado de partidas detectadas y pendientes antes de calcular indicadores reales."
+    )
+
+    detected_items_df = st.session_state.financial_items[
+        st.session_state.financial_items["Estado"] == "Detectada"
+    ]
+
+    missing_items_df = st.session_state.financial_items[
+        st.session_state.financial_items["Estado"] == "No detectada"
+    ]
+
+    summary = st.session_state.financial_items_summary
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        kpi_card(
+            "Detectadas",
+            len(detected_items_df),
+            "Partidas listas para KPIs",
+            "green",
+            "green"
+        )
+
+    with col2:
+        kpi_card(
+            "Pendientes",
+            len(missing_items_df),
+            "Requieren mejora de reglas",
+            "yellow" if len(missing_items_df) > 0 else "green",
+            "yellow" if len(missing_items_df) > 0 else "green"
+        )
+
+    with col3:
+        kpi_card(
+            "Cobertura",
+            f"{summary['coverage']}%",
+            summary["status"],
+            "green" if summary["coverage"] >= 75 else "yellow",
+            "green" if summary["coverage"] >= 75 else "yellow"
+        )
+
+    st.subheader("Partidas detectadas")
+    st.dataframe(detected_items_df, width="stretch")
+
+    if not missing_items_df.empty:
+        st.subheader("Partidas pendientes de detección")
+        st.warning(
+            "Estas partidas todavía no fueron encontradas automáticamente. "
+            "Vamos a usarlas para mejorar las reglas del extractor antes de calcular KPIs reales."
+        )
+        st.dataframe(missing_items_df, width="stretch")
+    else:
+        st.success("AFINA detectó todas las partidas FP&A buscadas para esta etapa.")
+
+
 # =========================
 # Sidebar
 # =========================
@@ -537,6 +600,7 @@ with st.sidebar:
         st.info("Sin análisis activo")
 
     st.caption("AFINA MVP · GOBLEXA")
+
 
 # =========================
 # 1. Nuevo análisis FP&A
@@ -785,51 +849,7 @@ if section == "1. Nuevo análisis FP&A":
         summary_df = documents_summary_table(st.session_state.fpna_documents)
         st.dataframe(summary_df, width="stretch")
 
-        if st.session_state.financial_items_summary is not None:
-            items_summary = st.session_state.financial_items_summary
-
-            section_header(
-                "Partidas financieras clave detectadas",
-                "AFINA buscó cuentas e indicadores base para preparar KPIs, diagnóstico e informe ejecutivo."
-            )
-
-            if items_summary["coverage"] >= 75:
-                items_color = "green"
-                items_dot = "green"
-            elif items_summary["coverage"] >= 45:
-                items_color = "yellow"
-                items_dot = "yellow"
-            else:
-                items_color = "red"
-                items_dot = "red"
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                kpi_card("Cobertura", f"{items_summary['coverage']}%", items_summary["status"], items_color, items_dot)
-            with col2:
-                kpi_card("Detectadas", items_summary["detected_items"], "Partidas encontradas", "green", "green")
-            with col3:
-                kpi_card("Pendientes", items_summary["missing_items"], "Partidas no detectadas", "yellow", "yellow")
-            with col4:
-                kpi_card("Total buscadas", items_summary["total_items"], "Partidas FP&A", "blue", "blue")
-
-            st.markdown(
-                f"""
-                <div class="info-box">
-                    <strong>Lectura preliminar:</strong><br>
-                    {items_summary["detail"]}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            if st.session_state.financial_items is not None:
-                detected_items_df = st.session_state.financial_items[
-                    st.session_state.financial_items["Estado"] == "Detectada"
-                ]
-
-                st.dataframe(detected_items_df, width="stretch")
+        render_financial_items_section()
 
         with st.expander("Detalle técnico para desarrollo"):
             for role, doc in st.session_state.fpna_documents.items():
@@ -851,6 +871,7 @@ if section == "1. Nuevo análisis FP&A":
             on_click=go_to,
             args=("2. Dashboard financiero",)
         )
+
 
 # =========================
 # 2. Dashboard financiero
@@ -923,27 +944,7 @@ elif section == "2. Dashboard financiero":
         st.subheader("Fuentes utilizadas por AFINA")
         st.dataframe(documents_summary_table(st.session_state.fpna_documents), width="stretch")
 
-        if st.session_state.financial_items_summary is not None:
-            items_summary = st.session_state.financial_items_summary
-
-            section_header(
-                "Partidas base para KPIs",
-                "Resumen de las cuentas e indicadores que AFINA logró identificar automáticamente."
-            )
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                kpi_card("Cobertura partidas", f"{items_summary['coverage']}%", items_summary["status"], "green" if items_summary["coverage"] >= 75 else "yellow", "green" if items_summary["coverage"] >= 75 else "yellow")
-            with col2:
-                kpi_card("Detectadas", items_summary["detected_items"], "Partidas FP&A", "green", "green")
-            with col3:
-                kpi_card("Pendientes", items_summary["missing_items"], "Requieren revisión", "yellow", "yellow")
-            with col4:
-                kpi_card("Listo KPI", "Parcial", "Motor en próxima etapa", "blue", "blue")
-
-            if st.session_state.financial_items is not None:
-                st.dataframe(st.session_state.financial_items, width="stretch")
+        render_financial_items_section()
 
         section_header(
             "KPIs demostrativos",
@@ -976,6 +977,7 @@ elif section == "2. Dashboard financiero":
                 "Distribución inicial estimada para el tablero demostrativo."
             )
             st.plotly_chart(build_pie_chart(), width="stretch")
+
 
 # =========================
 # 3. KPIs / Industria
@@ -1027,6 +1029,9 @@ elif section == "3. KPIs / Industria":
         st.subheader("Estados disponibles para KPIs")
         st.dataframe(documents_summary_table(st.session_state.fpna_documents), width="stretch")
 
+        render_financial_items_section()
+
+
 # =========================
 # 4. Proyecciones
 # =========================
@@ -1070,6 +1075,7 @@ elif section == "4. Proyecciones":
             """,
             unsafe_allow_html=True
         )
+
 
 # =========================
 # 5. Chatbot AFINA
@@ -1123,6 +1129,7 @@ elif section == "5. Chatbot AFINA":
                 unsafe_allow_html=True
             )
 
+
 # =========================
 # 6. Informe
 # =========================
@@ -1164,6 +1171,7 @@ elif section == "6. Informe":
         with col2:
             action_card("📝", "Word editable", "Documento con estilos corporativos editable por el usuario.")
 
+
 # =========================
 # 7. Admin básico
 # =========================
@@ -1190,6 +1198,7 @@ elif section == "7. Admin básico":
         action_card("📊", "Ver uso", "Actividad, análisis y reportes generados.")
     with col3:
         action_card("👥", "Gestionar usuarios", "Roles y accesos para una etapa futura.")
+
 
 st.markdown(
     """

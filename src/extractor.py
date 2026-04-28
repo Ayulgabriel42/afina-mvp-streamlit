@@ -301,6 +301,82 @@ def find_best_match(normalized_df, item_config):
     return candidates[0]
 
 
+
+def row_to_searchable_text(row):
+    parts = []
+
+    for value in row:
+        if pd.isna(value):
+            continue
+
+        text = str(value).strip()
+
+        if text and text.lower() != "none":
+            parts.append(text)
+
+    return " | ".join(parts)
+
+
+def get_last_numeric_value_from_raw_row(row):
+    last_value = None
+    last_column = None
+
+    for col, value in row.items():
+        numeric_value = pd.to_numeric(value, errors="coerce")
+
+        if pd.notna(numeric_value):
+            last_value = float(numeric_value)
+            last_column = col
+
+    return last_value, last_column
+
+
+def find_best_match_raw(raw_df, item_config):
+    """
+    Búsqueda alternativa sobre la fila completa del Excel original.
+    Esto ayuda especialmente en hojas de ratios donde el normalizador puede confundir
+    la columna de unidad con la columna de indicador.
+    """
+    if raw_df is None or raw_df.empty:
+        return None
+
+    candidates = []
+
+    for _, row in raw_df.iterrows():
+        searchable_text = row_to_searchable_text(row)
+        score = match_score(searchable_text, item_config["keywords"])
+
+        if score <= 0:
+            continue
+
+        value, value_column = get_last_numeric_value_from_raw_row(row)
+
+        candidates.append({
+            "score": score,
+            "account_name": searchable_text[:180],
+            "value": value,
+            "value_column": value_column,
+            "row_type": "Cuenta financiera",
+            "category": "Detectado desde fila original",
+            "statement": "No determinado",
+            "code": ""
+        })
+
+    if not candidates:
+        return None
+
+    candidates = sorted(
+        candidates,
+        key=lambda item: (
+            item["score"],
+            item["value"] is not None
+        ),
+        reverse=True
+    )
+
+    return candidates[0]
+
+
 def extract_financial_items(documents):
     """
     Extrae partidas financieras clave desde documentos FP&A mapeados.
@@ -321,6 +397,16 @@ def extract_financial_items(documents):
             normalized_df = doc["normalization"]["normalized_df"]
 
             match = find_best_match(normalized_df, item_config)
+
+            raw_match = find_best_match_raw(
+                doc.get("dataframe"),
+                item_config
+            )
+
+            if raw_match is not None and (
+                match is None or raw_match["score"] > match["score"]
+            ):
+                match = raw_match
 
             if match is None:
                 continue
