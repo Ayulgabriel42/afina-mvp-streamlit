@@ -473,3 +473,421 @@ def extract_financial_items(documents):
     }
 
     return items_df, summary
+
+
+# ============================================================
+# Mejora de calidad FP&A - selección más confiable de partidas
+# ============================================================
+
+QUALITY_RULES = {
+    "total_assets": {
+        "extra_keywords": ["total activo", "activos totales", "total de activos"],
+        "negative_keywords": [
+            "activos corrientes",
+            "activo corriente",
+            "activos no corrientes",
+            "activo no corriente",
+            "total activos corrientes",
+            "total activos no corrientes"
+        ],
+        "preferred_roles": ["balance"],
+        "prefer_subtotal": True,
+        "avoid_zero": True
+    },
+    "current_assets": {
+        "extra_keywords": ["total activos corrientes", "activos corrientes", "activo corriente"],
+        "negative_keywords": ["no corriente", "no corrientes"],
+        "preferred_roles": ["balance"],
+        "prefer_subtotal": True,
+        "avoid_zero": True
+    },
+    "total_liabilities": {
+        "extra_keywords": ["total pasivo", "pasivos totales", "total de pasivos"],
+        "negative_keywords": [
+            "pasivos corrientes",
+            "pasivo corriente",
+            "pasivos no corrientes",
+            "pasivo no corriente",
+            "total pasivos corrientes",
+            "total pasivos no corrientes"
+        ],
+        "preferred_roles": ["balance"],
+        "prefer_subtotal": True,
+        "avoid_zero": True
+    },
+    "current_liabilities": {
+        "extra_keywords": ["total pasivos corrientes", "pasivos corrientes", "pasivo corriente"],
+        "negative_keywords": ["no corriente", "no corrientes"],
+        "preferred_roles": ["balance"],
+        "prefer_subtotal": True,
+        "avoid_zero": True
+    },
+    "equity": {
+        "extra_keywords": [
+            "total patrimonio",
+            "patrimonio neto",
+            "total patrimonio neto",
+            "patrimonio atribuible",
+            "capital y reservas"
+        ],
+        "negative_keywords": [
+            "pasivo y patrimonio",
+            "total pasivos y patrimonio",
+            "pasivos y patrimonio"
+        ],
+        "preferred_roles": ["balance"],
+        "prefer_subtotal": True,
+        "avoid_zero": True
+    },
+    "sales": {
+        "extra_keywords": [
+            "ingresos por ventas",
+            "ventas netas",
+            "ingresos de actividades ordinarias",
+            "ingresos operacionales"
+        ],
+        "negative_keywords": [
+            "costo",
+            "gasto",
+            "descuento",
+            "devolucion",
+            "devolución"
+        ],
+        "preferred_roles": ["pnl", "database"],
+        "avoid_zero": True
+    },
+    "gross_profit": {
+        "extra_keywords": [
+            "utilidad bruta",
+            "ganancia bruta",
+            "margen bruto",
+            "margen comercial"
+        ],
+        "negative_keywords": [],
+        "preferred_roles": ["pnl", "database"],
+        "prefer_subtotal": True
+    },
+    "operating_result": {
+        "extra_keywords": [
+            "resultado operativo",
+            "resultado de explotacion",
+            "resultado de explotación",
+            "utilidad operativa",
+            "ebit"
+        ],
+        "negative_keywords": [
+            "antes de participaciones",
+            "antes de impuestos",
+            "resultado antes"
+        ],
+        "preferred_roles": ["pnl", "database"],
+        "prefer_subtotal": True
+    },
+    "net_income": {
+        "extra_keywords": [
+            "utilidad neta",
+            "resultado neto",
+            "ganancia neta",
+            "resultado del ejercicio",
+            "determinacion del resultado del ejercicio",
+            "determinación del resultado del ejercicio"
+        ],
+        "negative_keywords": [
+            "bruta",
+            "operativo",
+            "operativa",
+            "antes de impuestos",
+            "antes de participaciones"
+        ],
+        "preferred_roles": ["pnl", "database"],
+        "prefer_subtotal": True,
+        "avoid_zero": True
+    },
+    "debt_ratio": {
+        "extra_keywords": [
+            "debt ratio",
+            "ratio de endeudamiento",
+            "endeudamiento",
+            "pasivo total activo total",
+            "pasivo total / activo total"
+        ],
+        "negative_keywords": [],
+        "preferred_roles": ["ratios", "balance"]
+    },
+    "current_ratio": {
+        "extra_keywords": [
+            "current ratio",
+            "liquidez corriente",
+            "ratio corriente",
+            "razon corriente",
+            "razón corriente"
+        ],
+        "negative_keywords": [],
+        "preferred_roles": ["ratios"]
+    },
+    "quick_ratio": {
+        "extra_keywords": [
+            "quick ratio",
+            "acid test",
+            "prueba acida",
+            "prueba ácida"
+        ],
+        "negative_keywords": [],
+        "preferred_roles": ["ratios"]
+    },
+    "roe": {
+        "extra_keywords": [
+            "roe",
+            "return on equity",
+            "rentabilidad sobre patrimonio",
+            "rentabilidad patrimonial"
+        ],
+        "negative_keywords": [],
+        "preferred_roles": ["ratios"]
+    },
+    "roa": {
+        "extra_keywords": [
+            "roa",
+            "return on assets",
+            "rentabilidad sobre activos"
+        ],
+        "negative_keywords": [],
+        "preferred_roles": ["ratios"]
+    },
+    "cash_conversion_cycle": {
+        "extra_keywords": [
+            "cash conversion cycle",
+            "ciclo de caja",
+            "ciclo financiero",
+            "cash cycle"
+        ],
+        "negative_keywords": [],
+        "preferred_roles": ["ratios"]
+    }
+}
+
+
+def build_quality_item_config(item_key, item_config):
+    """
+    Crea una copia de la configuración original sumando keywords específicas
+    para mejorar la detección sin modificar el diccionario base.
+    """
+    config = dict(item_config)
+    rules = QUALITY_RULES.get(item_key, {})
+    extra_keywords = rules.get("extra_keywords", [])
+
+    config["keywords"] = list(dict.fromkeys(
+        list(item_config.get("keywords", [])) + extra_keywords
+    ))
+
+    return config
+
+
+def contains_any_keyword(text, keywords):
+    normalized = normalize_text(text)
+
+    for keyword in keywords:
+        if normalize_text(keyword) in normalized:
+            return True
+
+    return False
+
+
+def is_bad_quality_match(item_key, match):
+    """
+    Descarta coincidencias que parecen correctas por texto parcial,
+    pero que financieramente corresponden a otra partida.
+    """
+    if match is None:
+        return True
+
+    rules = QUALITY_RULES.get(item_key, {})
+    negative_keywords = rules.get("negative_keywords", [])
+
+    account_name = match.get("account_name", "")
+
+    if negative_keywords and contains_any_keyword(account_name, negative_keywords):
+        return True
+
+    return False
+
+
+def adjusted_match_score(item_key, role, match, item_config):
+    """
+    Ajusta el score por calidad financiera:
+    - Penaliza falsos positivos.
+    - Premia fuentes esperadas.
+    - Premia subtotales/totales cuando corresponde.
+    - Penaliza valores cero en partidas donde un cero suele ser sospechoso.
+    """
+    if match is None:
+        return -9999
+
+    if is_bad_quality_match(item_key, match):
+        return -9999
+
+    rules = QUALITY_RULES.get(item_key, {})
+    score = float(match.get("score", 0))
+
+    preferred_roles = rules.get("preferred_roles", item_config.get("source_role", []))
+
+    if role in preferred_roles:
+        role_position = preferred_roles.index(role)
+        score += max(0, 40 - (role_position * 10))
+
+    row_type = str(match.get("row_type", ""))
+
+    if rules.get("prefer_subtotal") and row_type == "Subtotal / total":
+        score += 20
+
+    if row_type == "Cuenta financiera":
+        score += 8
+
+    value = match.get("value", None)
+
+    try:
+        numeric_value = float(value) if value is not None else None
+    except Exception:
+        numeric_value = None
+
+    if rules.get("avoid_zero") and numeric_value == 0:
+        score -= 35
+
+    if numeric_value is not None:
+        score += 5
+
+    return score
+
+
+def choose_better_match(item_key, role, normalized_match, raw_match, item_config):
+    """
+    Elige entre la coincidencia encontrada en tabla normalizada y la encontrada
+    en fila original.
+    """
+    normalized_score = adjusted_match_score(item_key, role, normalized_match, item_config)
+    raw_score = adjusted_match_score(item_key, role, raw_match, item_config)
+
+    if raw_score > normalized_score:
+        raw_match["adjusted_score"] = raw_score
+        return raw_match
+
+    if normalized_match is not None:
+        normalized_match["adjusted_score"] = normalized_score
+
+    return normalized_match
+
+
+def extract_financial_items(documents):
+    """
+    Extrae partidas financieras clave desde documentos FP&A mapeados.
+    Versión mejorada:
+    - Evita confundir totales con corrientes/no corrientes.
+    - Prioriza P&L para resultados.
+    - Prioriza Balance para activos/pasivos/patrimonio.
+    - Usa búsqueda en fila original como respaldo.
+    """
+    extracted_rows = []
+
+    for item_key, original_item_config in FINANCIAL_ITEMS.items():
+        item_config = build_quality_item_config(item_key, original_item_config)
+
+        best_global_match = None
+        best_global_score = -9999
+        best_source_label = None
+        best_sheet = None
+
+        for role in item_config["source_role"]:
+            if role not in documents:
+                continue
+
+            doc = documents[role]
+            normalized_df = doc["normalization"]["normalized_df"]
+
+            normalized_match = find_best_match(normalized_df, item_config)
+
+            try:
+                raw_match = find_best_match_raw(
+                    doc.get("dataframe"),
+                    item_config
+                )
+            except NameError:
+                raw_match = None
+
+            match = choose_better_match(
+                item_key,
+                role,
+                normalized_match,
+                raw_match,
+                item_config
+            )
+
+            if match is None:
+                continue
+
+            adjusted_score = match.get(
+                "adjusted_score",
+                adjusted_match_score(item_key, role, match, item_config)
+            )
+
+            if adjusted_score > best_global_score:
+                best_global_score = adjusted_score
+                best_global_match = match
+                best_source_label = doc["role_label"]
+                best_sheet = doc["sheet_name"]
+
+        if best_global_match is None or best_global_score <= 0:
+            extracted_rows.append({
+                "Código interno": item_key,
+                "Partida FP&A": item_config["label"],
+                "Fuente esperada": ", ".join(item_config["source_role"]),
+                "Estado": "No detectada",
+                "Fuente utilizada": "",
+                "Hoja": "",
+                "Cuenta detectada": "",
+                "Categoría": "",
+                "Valor detectado": None,
+                "Columna valor": "",
+                "Confianza": 0
+            })
+        else:
+            extracted_rows.append({
+                "Código interno": item_key,
+                "Partida FP&A": item_config["label"],
+                "Fuente esperada": ", ".join(item_config["source_role"]),
+                "Estado": "Detectada",
+                "Fuente utilizada": best_source_label,
+                "Hoja": best_sheet,
+                "Cuenta detectada": best_global_match["account_name"],
+                "Categoría": best_global_match["category"],
+                "Valor detectado": best_global_match["value"],
+                "Columna valor": best_global_match["value_column"],
+                "Confianza": round(best_global_score, 1)
+            })
+
+    items_df = pd.DataFrame(extracted_rows)
+
+    detected_count = int((items_df["Estado"] == "Detectada").sum())
+    total_count = len(items_df)
+
+    coverage = round((detected_count / total_count) * 100, 1) if total_count else 0
+
+    if coverage >= 75:
+        status = "Alta"
+        detail = "AFINA detectó la mayoría de las partidas necesarias para iniciar KPIs y diagnóstico financiero."
+    elif coverage >= 45:
+        status = "Media"
+        detail = "AFINA detectó varias partidas clave, pero algunas deberán validarse o completarse antes del informe final."
+    else:
+        status = "Baja"
+        detail = "AFINA detectó pocas partidas clave. Conviene revisar el mapeo de hojas o normalización."
+
+    summary = {
+        "total_items": total_count,
+        "detected_items": detected_count,
+        "missing_items": total_count - detected_count,
+        "coverage": coverage,
+        "status": status,
+        "detail": detail
+    }
+
+    return items_df, summary

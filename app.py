@@ -6,6 +6,7 @@ from src.loader import get_excel_sheets, load_financial_file
 from src.analyzer import analyze_financial_dataframe
 from src.normalizer import normalize_financial_dataframe
 from src.extractor import extract_financial_items
+from src.kpi_engine import calculate_kpis
 from src.statement_mapper import (
     NO_USAR,
     STATEMENT_ROLES,
@@ -287,6 +288,8 @@ DEFAULTS = {
     "mapping_completeness": None,
     "financial_items": None,
     "financial_items_summary": None,
+    "kpis": None,
+    "kpis_summary": None,
     "selected_industry": "Sector Químico",
     "analysis_period": None,
     "comparison_period": None,
@@ -502,6 +505,97 @@ def documents_summary_table(documents):
     return pd.DataFrame(rows)
 
 
+
+def render_kpis_section(show_trace=False):
+    if st.session_state.kpis is None or st.session_state.kpis_summary is None:
+        return
+
+    summary = st.session_state.kpis_summary
+    kpis_df = st.session_state.kpis
+
+    section_header(
+        "KPIs financieros calculados",
+        "Indicadores generados a partir de las partidas FP&A detectadas, con trazabilidad de cálculo."
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        kpi_card(
+            "Cobertura KPI",
+            f"{summary['coverage']}%",
+            summary["status"],
+            "green" if summary["coverage"] >= 80 else "yellow",
+            "green" if summary["coverage"] >= 80 else "yellow"
+        )
+
+    with col2:
+        kpi_card(
+            "Calculados",
+            summary["calculated_kpis"],
+            "Indicadores disponibles",
+            "green",
+            "green"
+        )
+
+    with col3:
+        kpi_card(
+            "Pendientes",
+            summary["missing_kpis"],
+            "Indicadores sin datos",
+            "yellow" if summary["missing_kpis"] > 0 else "green",
+            "yellow" if summary["missing_kpis"] > 0 else "green"
+        )
+
+    with col4:
+        kpi_card(
+            "Total KPIs",
+            summary["total_kpis"],
+            "KPIs base FP&A",
+            "blue",
+            "blue"
+        )
+
+    st.markdown(
+        f"""
+        <div class="info-box">
+            <strong>Lectura KPI:</strong><br>
+            {summary["detail"]}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    visible_columns = [
+        "KPI",
+        "Valor formateado",
+        "Fórmula",
+        "Fuente cálculo",
+        "Estado",
+        "Lectura"
+    ]
+
+    st.subheader("Resumen de KPIs")
+    st.dataframe(kpis_df[visible_columns], width="stretch")
+
+    if show_trace:
+        with st.expander("Trazabilidad de cálculo KPI"):
+            trace_columns = [
+                "KPI",
+                "Numerador usado",
+                "Valor numerador",
+                "Fuente numerador",
+                "Hoja numerador",
+                "Cuenta numerador",
+                "Denominador usado",
+                "Valor denominador",
+                "Fuente denominador",
+                "Hoja denominador",
+                "Cuenta denominador"
+            ]
+            st.dataframe(kpis_df[trace_columns], width="stretch")
+
+
 def render_financial_items_section():
     if st.session_state.financial_items is None:
         return
@@ -562,6 +656,152 @@ def render_financial_items_section():
         st.dataframe(missing_items_df, width="stretch")
     else:
         st.success("AFINA detectó todas las partidas FP&A buscadas para esta etapa.")
+
+
+
+def render_kpi_visual_grid(show_table=True, show_trace=True):
+    """
+    Renderiza KPIs reales en formato visual.
+    Si los KPIs no están calculados pero existen partidas FP&A, los calcula en el momento.
+    """
+    if st.session_state.get("kpis") is None and st.session_state.get("financial_items") is not None:
+        kpis, kpis_summary = calculate_kpis(
+            st.session_state.financial_items,
+            industry=st.session_state.get("selected_industry", "Sector Químico")
+        )
+        st.session_state.kpis = kpis
+        st.session_state.kpis_summary = kpis_summary
+
+    if st.session_state.get("kpis") is None or st.session_state.get("kpis_summary") is None:
+        st.warning("Todavía no hay KPIs calculados. Primero generá el análisis FP&A.")
+        return
+
+    kpis_df = st.session_state.kpis
+    summary = st.session_state.kpis_summary
+
+    section_header(
+        "KPIs financieros reales",
+        "Indicadores calculados desde las partidas FP&A detectadas, con semáforo y trazabilidad."
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        kpi_card(
+            "Cobertura KPI",
+            f"{summary['coverage']}%",
+            summary["status"],
+            "green" if summary["coverage"] >= 80 else "yellow",
+            "green" if summary["coverage"] >= 80 else "yellow"
+        )
+
+    with col2:
+        kpi_card(
+            "Calculados",
+            summary["calculated_kpis"],
+            "Indicadores disponibles",
+            "green",
+            "green"
+        )
+
+    with col3:
+        kpi_card(
+            "Pendientes",
+            summary["missing_kpis"],
+            "Sin datos suficientes",
+            "yellow" if summary["missing_kpis"] > 0 else "green",
+            "yellow" if summary["missing_kpis"] > 0 else "green"
+        )
+
+    with col4:
+        kpi_card(
+            "Total KPIs",
+            summary["total_kpis"],
+            "KPIs base FP&A",
+            "blue",
+            "blue"
+        )
+
+    st.markdown(
+        f"""
+        <div class="info-box">
+            <strong>Lectura KPI:</strong><br>
+            {summary["detail"]}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    main_kpi_codes = [
+        "current_ratio",
+        "debt_ratio",
+        "roe",
+        "roa",
+        "gross_margin",
+        "operating_margin",
+        "asset_turnover",
+        "cash_conversion_cycle"
+    ]
+
+    main_kpis_df = kpis_df[kpis_df["Código KPI"].isin(main_kpi_codes)]
+
+    st.subheader("Tablero visual de KPIs")
+
+    for start in range(0, len(main_kpis_df), 4):
+        cols = st.columns(4)
+        chunk = main_kpis_df.iloc[start:start + 4]
+
+        for idx, (_, row) in enumerate(chunk.iterrows()):
+            color = row.get("Color", "blue")
+
+            if color not in ["green", "yellow", "red", "blue"]:
+                color = "blue"
+
+            with cols[idx]:
+                kpi_card(
+                    row["KPI"],
+                    row["Valor formateado"],
+                    f'{row["Estado"]} · {row["Fuente cálculo"]}',
+                    color,
+                    color
+                )
+
+    if show_table:
+        visible_columns = [
+            "KPI",
+            "Valor formateado",
+            "Fórmula",
+            "Fuente cálculo",
+            "Estado",
+            "Lectura"
+        ]
+
+        st.subheader("Resumen de KPIs calculados")
+        st.dataframe(kpis_df[visible_columns], width="stretch")
+
+    if show_trace:
+        with st.expander("Trazabilidad de cálculo KPI"):
+            trace_columns = [
+                "KPI",
+                "Numerador usado",
+                "Valor numerador",
+                "Fuente numerador",
+                "Hoja numerador",
+                "Cuenta numerador",
+                "Denominador usado",
+                "Valor denominador",
+                "Fuente denominador",
+                "Hoja denominador",
+                "Cuenta denominador"
+            ]
+
+            available_trace_columns = [
+                col for col in trace_columns
+                if col in kpis_df.columns
+            ]
+
+            st.dataframe(kpis_df[available_trace_columns], width="stretch")
+
 
 
 # =========================
@@ -774,11 +1014,17 @@ if section == "1. Nuevo análisis FP&A":
             try:
                 documents = load_mapped_financial_documents(uploaded_file, mapping)
                 financial_items, financial_items_summary = extract_financial_items(documents)
+                kpis, kpis_summary = calculate_kpis(
+                    financial_items,
+                    industry=selected_industry
+                )
 
                 st.session_state.sheet_mapping = mapping
                 st.session_state.fpna_documents = documents
                 st.session_state.financial_items = financial_items
                 st.session_state.financial_items_summary = financial_items_summary
+                st.session_state.kpis = kpis
+                st.session_state.kpis_summary = kpis_summary
                 st.session_state.mapping_completeness = completeness
                 st.session_state.analysis_period = selected_period
                 st.session_state.comparison_period = selected_comparison_period
@@ -794,7 +1040,8 @@ if section == "1. Nuevo análisis FP&A":
                     "mapping": mapping,
                     "completeness": completeness,
                     "documents_summary": documents_summary_table(documents).to_dict(orient="records"),
-                    "financial_items_summary": financial_items_summary
+                    "financial_items_summary": financial_items_summary,
+                    "kpis_summary": kpis_summary
                 }
 
                 st.markdown(
@@ -850,6 +1097,7 @@ if section == "1. Nuevo análisis FP&A":
         st.dataframe(summary_df, width="stretch")
 
         render_financial_items_section()
+        render_kpis_section(show_trace=True)
 
         with st.expander("Detalle técnico para desarrollo"):
             for role, doc in st.session_state.fpna_documents.items():
@@ -947,20 +1195,43 @@ elif section == "2. Dashboard financiero":
         render_financial_items_section()
 
         section_header(
-            "KPIs demostrativos",
-            "Estos valores todavía son referenciales. En el siguiente módulo serán reemplazados por cálculos reales."
+            "KPIs principales",
+            "Indicadores calculados desde las partidas detectadas por AFINA."
         )
 
-        col1, col2, col3, col4 = st.columns(4)
+        if st.session_state.kpis is not None:
+            kpis_df = st.session_state.kpis
 
-        with col1:
-            kpi_card("Ratio de Liquidez", "0.75", "Capacidad de pago a corto plazo", "red", "red")
-        with col2:
-            kpi_card("Rentabilidad ROE", "5.8%", "Retorno sobre patrimonio", "red", "red")
-        with col3:
-            kpi_card("Nivel de Endeudamiento", "18.2%", "Deuda total / Activos totales", "green", "green")
-        with col4:
-            kpi_card("Rotación de Activos", "0.7x", "Eficiencia en uso de activos", "red", "red")
+            main_kpis = [
+                ("current_ratio", "Liquidez corriente"),
+                ("roe", "ROE"),
+                ("debt_ratio", "Endeudamiento"),
+                ("asset_turnover", "Rotación de activos")
+            ]
+
+            col1, col2, col3, col4 = st.columns(4)
+            cols = [col1, col2, col3, col4]
+
+            for i, (code, label) in enumerate(main_kpis):
+                row = kpis_df[kpis_df["Código KPI"] == code]
+
+                with cols[i]:
+                    if not row.empty:
+                        item = row.iloc[0]
+                        color = item["Color"] if item["Color"] in ["green", "yellow", "red", "blue"] else "blue"
+                        kpi_card(
+                            label,
+                            item["Valor formateado"],
+                            item["Estado"],
+                            color,
+                            color
+                        )
+                    else:
+                        kpi_card(label, "Sin datos", "No calculado", "yellow", "yellow")
+
+            render_kpis_section(show_trace=False)
+        else:
+            st.warning("Todavía no hay KPIs calculados.")
 
         col1, col2 = st.columns(2)
 
