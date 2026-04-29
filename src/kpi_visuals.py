@@ -52,8 +52,13 @@ def prepare_kpi_visual_dataframe(kpis_df):
 
 def build_health_score(kpis_df):
     """
-    Score de salud financiera simple:
-    KPIs verdes / KPIs calculados.
+    Score de salud financiera ponderado:
+    - Verde = 100 puntos
+    - Amarillo = 50 puntos
+    - Rojo = 0 puntos
+
+    Esto evita que una empresa con muchos KPIs amarillos quede artificialmente
+    como crítica solo porque tiene pocos indicadores verdes.
     """
     if kpis_df is None or kpis_df.empty:
         return {
@@ -82,12 +87,22 @@ def build_health_score(kpis_df):
     red = int((calculated["Estado"] == "Rojo").sum())
     total = len(calculated)
 
-    score = round((green / total) * 100, 1) if total else 0
+    points = {
+        "Verde": 100,
+        "Amarillo": 50,
+        "Rojo": 0
+    }
 
-    if score >= 70:
+    calculated["Puntaje KPI"] = calculated["Estado"].map(points).fillna(0)
+
+    score = round(calculated["Puntaje KPI"].sum() / total, 1) if total else 0
+
+    if score >= 75:
         label = "Salud financiera sólida"
-    elif score >= 40:
+    elif score >= 50:
         label = "Salud financiera moderada"
+    elif score >= 30:
+        label = "Salud financiera bajo observación"
     else:
         label = "Salud financiera crítica"
 
@@ -99,7 +114,6 @@ def build_health_score(kpis_df):
         "total": total,
         "label": label
     }
-
 
 def build_health_gauge(kpis_df):
     score_data = build_health_score(kpis_df)
