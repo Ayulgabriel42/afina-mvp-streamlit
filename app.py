@@ -7,6 +7,16 @@ from src.analyzer import analyze_financial_dataframe
 from src.normalizer import normalize_financial_dataframe
 from src.extractor import extract_financial_items
 from src.kpi_engine import calculate_kpis
+from src.kpi_visuals import (
+    prepare_kpi_visual_dataframe,
+    build_health_gauge,
+    build_status_donut,
+    build_percentage_kpis_chart,
+    build_ratio_kpis_chart,
+    build_cash_cycle_chart,
+    build_kpi_radar_chart,
+    build_health_score
+)
 from src.statement_mapper import (
     NO_USAR,
     STATEMENT_ROLES,
@@ -305,7 +315,7 @@ for key, value in DEFAULTS.items():
 NAV_OPTIONS = [
     "1. Nuevo análisis FP&A",
     "2. Dashboard financiero",
-    "3. KPIs / Industria",
+    "3. KPIs",
     "4. Proyecciones",
     "5. Chatbot AFINA",
     "6. Informe",
@@ -804,6 +814,170 @@ def render_kpi_visual_grid(show_table=True, show_trace=True):
 
 
 
+
+def render_kpi_executive_visuals(show_tables=True):
+    """
+    Visualización ejecutiva de KPIs reales.
+    Usa st.session_state.kpis generado por kpi_engine.py.
+    """
+    if st.session_state.get("kpis") is None:
+        st.warning("Todavía no hay KPIs calculados. Primero generá el análisis FP&A.")
+        return
+
+    kpis_df = prepare_kpi_visual_dataframe(st.session_state.kpis)
+
+    if kpis_df.empty:
+        st.warning("No se pudieron preparar los KPIs para visualización.")
+        return
+
+    score_data = build_health_score(kpis_df)
+
+    section_header(
+        "Dashboard ejecutivo de KPIs",
+        "Indicadores reales calculados por AFINA, con semáforos y lectura FP&A."
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        kpi_card(
+            "Score salud financiera",
+            f"{score_data['score']}%",
+            score_data["label"],
+            "green" if score_data["score"] >= 70 else "yellow" if score_data["score"] >= 40 else "red",
+            "green" if score_data["score"] >= 70 else "yellow" if score_data["score"] >= 40 else "red"
+        )
+
+    with col2:
+        kpi_card(
+            "KPIs verdes",
+            score_data["green"],
+            "Indicadores saludables",
+            "green",
+            "green"
+        )
+
+    with col3:
+        kpi_card(
+            "KPIs amarillos",
+            score_data["yellow"],
+            "Requieren seguimiento",
+            "yellow",
+            "yellow"
+        )
+
+    with col4:
+        kpi_card(
+            "KPIs rojos",
+            score_data["red"],
+            "Alertas críticas",
+            "red" if score_data["red"] > 0 else "green",
+            "red" if score_data["red"] > 0 else "green"
+        )
+
+    st.subheader("KPIs principales")
+
+    for start in range(0, len(kpis_df), 4):
+        cols = st.columns(4)
+        chunk = kpis_df.iloc[start:start + 4]
+
+        for idx, (_, row) in enumerate(chunk.iterrows()):
+            color = row.get("Color", "blue")
+
+            if color not in ["green", "yellow", "red", "blue"]:
+                color = "blue"
+
+            with cols[idx]:
+                kpi_card(
+                    row["KPI"],
+                    row["Valor formateado"],
+                    f'{row["Estado"]} · {row["Fuente cálculo"]}',
+                    color,
+                    color
+                )
+
+    st.subheader("Visualización ejecutiva")
+
+    fig_gauge, _ = build_health_gauge(kpis_df)
+    fig_donut = build_status_donut(kpis_df)
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.plotly_chart(fig_gauge, width="stretch")
+
+    if fig_donut is not None:
+        with c2:
+            st.plotly_chart(fig_donut, width="stretch")
+
+    fig_percentages = build_percentage_kpis_chart(kpis_df)
+    fig_radar = build_kpi_radar_chart(kpis_df)
+
+    c1, c2 = st.columns(2)
+
+    if fig_percentages is not None:
+        with c1:
+            st.plotly_chart(fig_percentages, width="stretch")
+
+    if fig_radar is not None:
+        with c2:
+            st.plotly_chart(fig_radar, width="stretch")
+
+    fig_ratios = build_ratio_kpis_chart(kpis_df)
+    fig_cash_cycle = build_cash_cycle_chart(kpis_df)
+
+    c1, c2 = st.columns(2)
+
+    if fig_ratios is not None:
+        with c1:
+            st.plotly_chart(fig_ratios, width="stretch")
+
+    if fig_cash_cycle is not None:
+        with c2:
+            st.plotly_chart(fig_cash_cycle, width="stretch")
+
+    if show_tables:
+        st.subheader("Tabla ejecutiva de KPIs")
+
+        visible_columns = [
+            "KPI",
+            "Valor formateado",
+            "Fórmula",
+            "Fuente cálculo",
+            "Estado",
+            "Lectura"
+        ]
+
+        available_columns = [
+            col for col in visible_columns
+            if col in kpis_df.columns
+        ]
+
+        st.dataframe(kpis_df[available_columns], width="stretch")
+
+        with st.expander("Trazabilidad técnica de cálculo"):
+            trace_columns = [
+                "KPI",
+                "Numerador usado",
+                "Valor numerador",
+                "Fuente numerador",
+                "Hoja numerador",
+                "Cuenta numerador",
+                "Denominador usado",
+                "Valor denominador",
+                "Fuente denominador",
+                "Hoja denominador",
+                "Cuenta denominador"
+            ]
+
+            available_trace_columns = [
+                col for col in trace_columns
+                if col in kpis_df.columns
+            ]
+
+            st.dataframe(kpis_df[available_trace_columns], width="stretch")
+
+
 # =========================
 # Sidebar
 # =========================
@@ -1129,7 +1303,7 @@ elif section == "2. Dashboard financiero":
         """
         <div class="hero-card">
             <div class="hero-title">Dashboard Financiero</div>
-            <div class="hero-subtitle">KPIs financieros · Semáforos por industria · Reportes ejecutivos</div>
+            <div class="hero-subtitle">Resumen ejecutivo · Salud financiera · KPIs principales</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -1161,46 +1335,66 @@ elif section == "2. Dashboard financiero":
             f"""
             <div class="success-box">
                 <strong>Análisis activo:</strong> {context["file_name"]}<br>
-                Período: <strong>{context["period"]}</strong> · Tipo: <strong>{context["analysis_type"]}</strong> · Industria: <strong>{context["industry"]}</strong>
+                Período: <strong>{context["period"]}</strong> · Tipo: <strong>{context["analysis_type"]}</strong> · Sector: <strong>{context["industry"]}</strong>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-        section_header(
-            "Base FP&A preparada",
-            "AFINA ya cuenta con los estados financieros mapeados para comenzar el cálculo de indicadores."
-        )
+        if st.session_state.kpis is None:
+            st.warning("El análisis está preparado, pero todavía no hay KPIs calculados.")
+        else:
+            kpis_df = prepare_kpi_visual_dataframe(st.session_state.kpis)
+            score_data = build_health_score(kpis_df)
 
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            kpi_card(
-                "Completitud FP&A",
-                f"{completeness['score']}%",
-                completeness["status"],
-                "green" if completeness["score"] >= 90 else "yellow",
-                "green" if completeness["score"] >= 90 else "yellow"
+            section_header(
+                "Resumen ejecutivo",
+                "Vista rápida del estado financiero general y los KPIs más relevantes."
             )
-        with col2:
-            kpi_card("Estados cargados", len(st.session_state.fpna_documents), "Bloques financieros disponibles", "blue", "blue")
-        with col3:
-            kpi_card("Industria", context["industry"], "Umbrales futuros", "yellow", "yellow")
-        with col4:
-            kpi_card("Estado", "Preparado", "Listo para motor KPI", "green", "green")
 
-        st.subheader("Fuentes utilizadas por AFINA")
-        st.dataframe(documents_summary_table(st.session_state.fpna_documents), width="stretch")
+            col1, col2, col3, col4 = st.columns(4)
 
-        render_financial_items_section()
+            with col1:
+                score_color = "green" if score_data["score"] >= 70 else "yellow" if score_data["score"] >= 40 else "red"
+                kpi_card(
+                    "Score salud financiera",
+                    f"{score_data['score']}%",
+                    score_data["label"],
+                    score_color,
+                    score_color
+                )
 
-        section_header(
-            "KPIs principales",
-            "Indicadores calculados desde las partidas detectadas por AFINA."
-        )
+            with col2:
+                kpi_card(
+                    "Mapeo FP&A",
+                    f"{completeness['score']}%",
+                    completeness["status"],
+                    "green" if completeness["score"] >= 90 else "yellow",
+                    "green" if completeness["score"] >= 90 else "yellow"
+                )
 
-        if st.session_state.kpis is not None:
-            kpis_df = st.session_state.kpis
+            with col3:
+                kpi_card(
+                    "KPIs calculados",
+                    st.session_state.kpis_summary["calculated_kpis"],
+                    "Indicadores disponibles",
+                    "green",
+                    "green"
+                )
+
+            with col4:
+                kpi_card(
+                    "Alertas críticas",
+                    score_data["red"],
+                    "KPIs en rojo",
+                    "red" if score_data["red"] > 0 else "green",
+                    "red" if score_data["red"] > 0 else "green"
+                )
+
+            section_header(
+                "KPIs principales",
+                "Indicadores clave para lectura rápida de liquidez, rentabilidad, deuda y eficiencia."
+            )
 
             main_kpis = [
                 ("current_ratio", "Liquidez corriente"),
@@ -1209,54 +1403,69 @@ elif section == "2. Dashboard financiero":
                 ("asset_turnover", "Rotación de activos")
             ]
 
-            col1, col2, col3, col4 = st.columns(4)
-            cols = [col1, col2, col3, col4]
+            cols = st.columns(4)
 
-            for i, (code, label) in enumerate(main_kpis):
+            for i, (code, fallback_label) in enumerate(main_kpis):
                 row = kpis_df[kpis_df["Código KPI"] == code]
 
                 with cols[i]:
                     if not row.empty:
                         item = row.iloc[0]
-                        color = item["Color"] if item["Color"] in ["green", "yellow", "red", "blue"] else "blue"
+                        color = item.get("Color", "blue")
+
+                        if color not in ["green", "yellow", "red", "blue"]:
+                            color = "blue"
+
                         kpi_card(
-                            label,
+                            item["KPI"],
                             item["Valor formateado"],
-                            item["Estado"],
+                            f'{item["Estado"]} · {item["Fuente cálculo"]}',
                             color,
                             color
                         )
                     else:
-                        kpi_card(label, "Sin datos", "No calculado", "yellow", "yellow")
+                        kpi_card(
+                            fallback_label,
+                            "Sin datos",
+                            "No calculado",
+                            "yellow",
+                            "yellow"
+                        )
 
-            render_kpis_section(show_trace=False)
-        else:
-            st.warning("Todavía no hay KPIs calculados.")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
             section_header(
-                "📈 Ratios Financieros vs. Objetivos",
-                "Comparación visual entre estado actual y referencia esperada."
+                "Visualización ejecutiva",
+                "Score general y distribución semafórica de los indicadores calculados."
             )
-            st.plotly_chart(build_bar_chart(), width="stretch")
 
-        with col2:
-            section_header(
-                "🧩 Composición de Activos",
-                "Distribución inicial estimada para el tablero demostrativo."
+            fig_gauge, _ = build_health_gauge(kpis_df)
+            fig_donut = build_status_donut(kpis_df)
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.plotly_chart(fig_gauge, width="stretch")
+
+            if fig_donut is not None:
+                with col2:
+                    st.plotly_chart(fig_donut, width="stretch")
+
+            st.markdown(
+                """
+                <div class="info-box">
+                    <strong>Lectura ejecutiva:</strong><br>
+                    Para revisar todos los indicadores, gráficos detallados, tabla ejecutiva y trazabilidad de cálculo,
+                    ingresá a la pestaña <strong>3. KPIs</strong>.
+                </div>
+                """,
+                unsafe_allow_html=True
             )
-            st.plotly_chart(build_pie_chart(), width="stretch")
-
-
 # =========================
-# 3. KPIs / Industria
+# 3. KPIs
 # =========================
-elif section == "3. KPIs / Industria":
+elif section == "3. KPIs":
     section_header(
-        "KPIs / Industria",
-        "Selección de industria y preparación de semáforos financieros."
+        "KPIs financieros",
+        "Análisis detallado de indicadores calculados, semáforos, gráficos y trazabilidad FP&A."
     )
 
     if not st.session_state.analysis_ready:
@@ -1268,41 +1477,38 @@ elif section == "3. KPIs / Industria":
             """,
             unsafe_allow_html=True
         )
-    else:
-        industry = st.selectbox(
-            "Industria",
-            INDUSTRIES,
-            index=INDUSTRIES.index(st.session_state.selected_industry)
+
+        st.button(
+            "Iniciar nuevo análisis FP&A",
+            type="primary",
+            on_click=go_to,
+            args=("1. Nuevo análisis FP&A",)
         )
 
-        st.session_state.selected_industry = industry
-        st.session_state.fpna_context["industry"] = industry
+    else:
+        context = st.session_state.fpna_context
 
         st.markdown(
             f"""
             <div class="success-box">
-                <strong>Industria seleccionada:</strong> {industry}<br>
-                En la siguiente etapa, esta selección recalculará los semáforos de los KPIs.
+                <strong>Análisis FP&A activo:</strong> {context["file_name"]}<br>
+                Período: <strong>{context["period"]}</strong> · Tipo: <strong>{context["analysis_type"]}</strong>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            action_card("🧪", "Sector Químico", "Capital de trabajo, margen operativo y estructura de deuda.")
-        with col2:
-            action_card("💻", "SaaS / Tecnología", "Margen, crecimiento, eficiencia y liquidez.")
-        with col3:
-            action_card("🏭", "Manufactura", "Activos, inventario, costos y rentabilidad.")
-
         st.subheader("Estados disponibles para KPIs")
-        st.dataframe(documents_summary_table(st.session_state.fpna_documents), width="stretch")
+        st.dataframe(
+            documents_summary_table(st.session_state.fpna_documents),
+            width="stretch"
+        )
+
+        render_kpi_executive_visuals(show_tables=True)
+
+        st.divider()
 
         render_financial_items_section()
-
-
 # =========================
 # 4. Proyecciones
 # =========================

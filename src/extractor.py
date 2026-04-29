@@ -891,3 +891,205 @@ def extract_financial_items(documents):
     }
 
     return items_df, summary
+
+
+# ============================================================
+# Ajuste específico: priorizar Resultado Operativo desde P&L
+# ============================================================
+
+_BASE_EXTRACT_FINANCIAL_ITEMS_OPERATING_FIX = extract_financial_items
+
+
+def _afina_get_latest_value_from_raw_financial_row(row):
+    """
+    Toma el último valor financiero de la fila, evitando columnas técnicas sueltas
+    que pueden aparecer al final del Excel.
+    Busca el bloque consecutivo más largo de valores numéricos y toma su último valor.
+    """
+    blocks = []
+    current_block = []
+
+    for col, value in row.items():
+        numeric_value = pd.to_numeric(value, errors="coerce")
+
+        if pd.notna(numeric_value):
+            current_block.append((col, float(numeric_value)))
+        else:
+            if current_block:
+                blocks.append(current_block)
+                current_block = []
+
+    if current_block:
+        blocks.append(current_block)
+
+    if not blocks:
+        return None, None
+
+    # Elegimos el bloque numérico más largo porque suele representar los períodos financieros.
+    best_block = max(blocks, key=len)
+
+    if not best_block:
+        return None, None
+
+    last_col, last_value = best_block[-1]
+
+    return last_value, last_col
+
+
+def _afina_find_operating_result_from_pnl(pnl_doc):
+    """
+    Busca Resultado Operativo específicamente dentro del P&L Statement.
+    Prioriza:
+    - Utilidad operativa
+    - Resultado de explotación
+    - Resultado operativo
+    - EBIT
+
+    Evita tomar resultados antes de impuestos o partidas auxiliares.
+    """
+    if pnl_doc is None:
+        return None
+
+    raw_df = pnl_doc.get("dataframe")
+
+    if raw_df is None or raw_df.empty:
+        return None
+
+    positive_keywords = [
+        "utilidad operativa",
+        "resultado de explotacion",
+        "resultado de explotación",
+        "resultado operativo",
+        "ebit"
+    ]
+
+    negative_keywords = [
+        "antes de impuesto",
+        "antes de impuestos",
+        "antes imp",
+        "despues imp",
+        "después imp",
+        "utilidad neta",
+        "resultado neto",
+        "gastos",
+        "ingresos gastos"
+    ]
+
+    candidates = []
+
+    for _, row in raw_df.iterrows():
+        text_parts = []
+
+        for value in row.values:
+            if pd.isna(value):
+                continue
+
+            text = str(value).strip()
+
+            if text:
+                text_parts.append(text)
+
+        searchable_text = " | ".join(text_parts)
+        normalized_text = normalize_text(searchable_text)
+
+        if not normalized_text:
+            continue
+
+        if any(normalize_text(word) in normalized_text for word in negative_keywords):
+            continue
+
+        score = 0
+
+        for keyword in positive_keywords:
+            normalized_keyword = normalize_text(keyword)
+
+            if normalized_keyword in normalized_text:
+                if keyword in ["utilidad operativa", "resultado de explotacion", "resultado de explotación", "resultado operativo"]:
+                    score = max(score, 120)
+                elif keyword == "ebit":
+                    score = max(score, 90)
+
+        if score <= 0:
+            continue
+
+        value, value_column = _afina_get_latest_value_from_raw_financial_row(row)
+
+        if value is None:
+            continue
+
+        # Para este caso puntual, evitamos reemplazar con cero.
+        if value == 0:
+            continue
+
+        candidates.append({
+            "score": score,
+            "account_name": searchable_text[:180],
+            "value": value,
+            "value_column": value_column,
+            "row_type": "Subtotal / total",
+            "category": "Resultados",
+            "statement": "Estado de resultados",
+            "code": ""
+        })
+
+    if not candidates:
+        return None
+
+    candidates = sorted(
+        candidates,
+        key=lambda item: (
+            item["score"],
+            abs(item["value"])
+        ),
+        reverse=True
+    )
+
+    return candidates[0]
+
+
+def extract_financial_items(documents):
+    """
+    Wrapper final del extractor.
+    Mantiene toda la lógica existente y solo corrige operating_result
+    para priorizar P&L Statement cuando encuentra una partida no nula.
+    """
+    items_df, summary = _BASE_EXTRACT_FINANCIAL_ITEMS_OPERATING_FIX(documents)
+
+    if documents is None or "pnl" not in documents:
+        return items_df, summary
+
+    pnl_doc = documents.get("pnl")
+    better_operating_result = _afina_find_operating_result_from_pnl(pnl_doc)
+
+    if better_operating_result is None:
+        return items_df, summary
+
+    mask = items_df["Código interno"] == "operating_result"
+
+    if mask.any():
+        items_df.loc[mask, "Estado"] = "Detectada"
+        items_df.loc[mask, "Fuente utilizada"] = pnl_doc.get("role_label", "Estado de resultados")
+        items_df.loc[mask, "Hoja"] = pnl_doc.get("sheet_name", "P&L Statement")
+        items_df.loc[mask, "Cuenta detectada"] = better_operating_result["account_name"]
+        items_df.loc[mask, "Categoría"] = better_operating_result["category"]
+        items_df.loc[mask, "Valor detectado"] = better_operating_result["value"]
+        items_df.loc[mask, "Columna valor"] = better_operating_result["value_column"]
+        items_df.loc[mask, "Confianza"] = better_operating_result["score"]
+
+    detected_count = int((items_df["Estado"] == "Detectada").sum())
+    total_count = len(items_df)
+    coverage = round((detected_count / total_count) * 100, 1) if total_count else 0
+
+    summary = {
+        "total_items": total_count,
+        "detected_items": detected_count,
+        "missing_items": total_count - detected_count,
+        "coverage": coverage,
+        "status": summary.get("status", "Alta"),
+        "detail": summary.get(
+            "detail",
+            "AFINA detectó las partidas necesarias para iniciar KPIs y diagnóstico financiero."
+        )
+    }
+
+    return items_df, summary
