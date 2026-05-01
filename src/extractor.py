@@ -16,6 +16,21 @@ FINANCIAL_ITEMS = {
         "keywords": ["cuentas por cobrar", "documentos por cobrar", "clientes", "créditos comerciales", "creditos comerciales"],
         "priority": 1
     },
+
+    "accounts_payable": {
+        "label": "Cuentas por pagar",
+        "source_role": ["balance", "database"],
+        "keywords": [
+            "cuentas por pagar",
+            "cuentas comerciales por pagar",
+            "proveedores",
+            "acreedores comerciales",
+            "obligaciones comerciales",
+            "accounts payable",
+            "trade payables"
+        ],
+        "priority": 1
+    },
     "inventory": {
         "label": "Inventarios / existencias",
         "source_role": ["balance", "database"],
@@ -58,6 +73,23 @@ FINANCIAL_ITEMS = {
         "keywords": ["total pasivos", "pasivo total"],
         "priority": 1
     },
+
+    "total_debt": {
+        "label": "Deuda total",
+        "source_role": ["balance", "database"],
+        "keywords": [
+            "deuda total",
+            "deuda financiera",
+            "obligaciones financieras",
+            "prestamos",
+            "préstamos",
+            "pasivos financieros",
+            "deuda bancaria",
+            "borrowings",
+            "financial debt"
+        ],
+        "priority": 2
+    },
     "equity": {
         "label": "Patrimonio",
         "source_role": ["balance"],
@@ -65,6 +97,21 @@ FINANCIAL_ITEMS = {
         "priority": 1
     },
 
+
+    "investment_total": {
+        "label": "Inversión total",
+        "source_role": ["balance", "database"],
+        "keywords": [
+            "inversion total",
+            "inversión total",
+            "capital invertido",
+            "total inversion",
+            "total inversión",
+            "invested capital",
+            "total investment"
+        ],
+        "priority": 3
+    },
     # Estado de resultados
     "sales": {
         "label": "Ventas / ingresos",
@@ -94,6 +141,19 @@ FINANCIAL_ITEMS = {
         "label": "Gastos financieros",
         "source_role": ["pnl", "cashflow", "database"],
         "keywords": ["gastos financieros", "gasto financiero", "intereses"],
+        "priority": 2
+    },
+
+    "ebitda": {
+        "label": "EBITDA",
+        "source_role": ["pnl", "database", "ratios"],
+        "keywords": [
+            "ebitda",
+            "resultado antes de intereses impuestos depreciaciones amortizaciones",
+            "resultado antes de intereses, impuestos, depreciaciones y amortizaciones",
+            "ganancia antes de intereses impuestos depreciacion amortizacion",
+            "ganancia antes de intereses, impuestos, depreciación y amortización"
+        ],
         "priority": 2
     },
     "net_income": {
@@ -667,6 +727,80 @@ QUALITY_RULES = {
 }
 
 
+
+# _AFINA_EXTRA_KPI_RULES_V03
+# Reglas adicionales para partidas necesarias del catálogo de 19 KPIs.
+QUALITY_RULES.update({
+    "accounts_payable": {
+        "extra_keywords": [
+            "cuentas por pagar",
+            "cuentas comerciales por pagar",
+            "proveedores",
+            "acreedores comerciales",
+            "obligaciones comerciales"
+        ],
+        "negative_keywords": [
+            "cuentas por cobrar",
+            "clientes",
+            "activo",
+            "inventario"
+        ],
+        "preferred_roles": ["balance", "database"],
+        "avoid_zero": True
+    },
+    "total_debt": {
+        "extra_keywords": [
+            "deuda total",
+            "deuda financiera",
+            "obligaciones financieras",
+            "prestamos",
+            "préstamos",
+            "pasivos financieros",
+            "deuda bancaria"
+        ],
+        "negative_keywords": [
+            "debt ratio",
+            "ratio",
+            "porcentaje",
+            "patrimonio"
+        ],
+        "preferred_roles": ["balance", "database"],
+        "avoid_zero": True
+    },
+    "investment_total": {
+        "extra_keywords": [
+            "inversion total",
+            "inversión total",
+            "capital invertido",
+            "total inversion",
+            "total inversión",
+            "invested capital"
+        ],
+        "negative_keywords": [
+            "gasto",
+            "costo",
+            "depreciacion",
+            "depreciación"
+        ],
+        "preferred_roles": ["balance", "database"],
+        "avoid_zero": True
+    },
+    "ebitda": {
+        "extra_keywords": [
+            "ebitda",
+            "resultado antes de intereses impuestos depreciaciones amortizaciones",
+            "resultado antes de intereses, impuestos, depreciaciones y amortizaciones"
+        ],
+        "negative_keywords": [
+            "margen ebitda",
+            "%",
+            "ratio"
+        ],
+        "preferred_roles": ["pnl", "database", "ratios"],
+        "avoid_zero": True
+    }
+})
+
 def build_quality_item_config(item_key, item_config):
     """
     Crea una copia de la configuración original sumando keywords específicas
@@ -727,6 +861,24 @@ def adjusted_match_score(item_key, role, match, item_config):
         return -9999
 
     rules = QUALITY_RULES.get(item_key, {})
+
+    # Evita falso positivo de inversión total.
+    # En Andes Chemical se detectó "Total Activos Corrientes" como investment_total,
+    # lo cual genera un ROI técnicamente calculado pero financieramente dudoso.
+    if item_key == "investment_total":
+        account_name_norm = normalize_text(match.get("account_name", ""))
+
+        strong_investment_terms = [
+            "inversion total",
+            "capital invertido",
+            "total inversion",
+            "invested capital",
+            "total investment"
+        ]
+
+        if not any(term in account_name_norm for term in strong_investment_terms):
+            return -9999
+
     score = float(match.get("score", 0))
 
     preferred_roles = rules.get("preferred_roles", item_config.get("source_role", []))
