@@ -23,6 +23,7 @@ from src.statement_mapper import (
     suggest_sheet_mapping,
     calculate_mapping_completeness,
 )
+from src.financial_snapshot import build_financial_snapshot, snapshot_to_json
 
 # =========================
 # Configuración general
@@ -304,6 +305,8 @@ DEFAULTS = {
     "analysis_period": None,
     "comparison_period": None,
     "analysis_type": None,
+    "uploaded_file_name": None,
+    "company_name": None,
     "analysis_ready": False,
     "current_section": "1. Nuevo análisis FP&A"
 }
@@ -668,6 +671,119 @@ def render_financial_items_section():
         st.success("AFINA detectó todas las partidas FP&A buscadas para esta etapa.")
 
 
+
+
+
+def render_financial_snapshot_section():
+    """
+    Genera y muestra el JSON financiero estándar del análisis actual.
+    Esta es la base para IA, informes PDF/Word y chatbot contextual.
+    """
+    if st.session_state.get("kpis") is None:
+        st.warning("Todavía no hay KPIs calculados. Primero generá el análisis FP&A.")
+        return
+
+    kpis_df = st.session_state.get("kpis")
+    financial_items_df = st.session_state.get("financial_items")
+
+    source_file = (
+        st.session_state.get("uploaded_file_name")
+        or st.session_state.get("source_file")
+        or st.session_state.get("file_name")
+        or "Archivo financiero cargado"
+    )
+
+    company_name = st.session_state.get("company_name") or "Empresa analizada"
+
+    snapshot = build_financial_snapshot(
+        company_name=company_name,
+        source_file=source_file,
+        industry=st.session_state.get("selected_industry", "No especificada"),
+        period=st.session_state.get("analysis_period", "No especificado"),
+        analysis_type=st.session_state.get("analysis_type", "No especificado"),
+        kpis_df=kpis_df,
+        kpis_summary=st.session_state.get("kpis_summary"),
+        financial_items_df=financial_items_df,
+        financial_items_summary=st.session_state.get("financial_items_summary"),
+    )
+
+    st.session_state["financial_snapshot"] = snapshot
+
+    section_header(
+        "JSON financiero estándar",
+        "Snapshot estructurado del análisis: base para IA, informe PDF/Word y chatbot contextual."
+    )
+
+    score = snapshot["health_score"]["score"]
+    kpi_summary = snapshot["kpi_summary"]
+    alerts = snapshot["alerts"]
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        kpi_card(
+            "Score financiero",
+            f"{score}%",
+            snapshot["health_score"]["label"],
+            "green" if score >= 75 else "yellow" if score >= 50 else "red",
+            "green" if score >= 75 else "yellow" if score >= 50 else "red"
+        )
+
+    with c2:
+        kpi_card(
+            "KPIs calculados",
+            kpi_summary["calculados"],
+            f"de {kpi_summary['total']} KPIs",
+            "green" if kpi_summary["pendientes"] == 0 else "yellow",
+            "green" if kpi_summary["pendientes"] == 0 else "yellow"
+        )
+
+    with c3:
+        kpi_card(
+            "Dimensiones FPA",
+            len(snapshot["dimensions_fpa"]),
+            "Bloques financieros",
+            "blue",
+            "blue"
+        )
+
+    with c4:
+        kpi_card(
+            "Alertas JSON",
+            len(alerts),
+            "Rojas o sin datos",
+            "red" if len(alerts) > 0 else "green",
+            "red" if len(alerts) > 0 else "green"
+        )
+
+    st.markdown(
+        """
+        <div class="info-box">
+            <strong>Uso previsto:</strong><br>
+            Este JSON debe ser consumido por la futura capa de IA. La IA no debería recalcular KPIs:
+            debe interpretar este snapshot validado por el motor financiero de AFINA.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    json_payload = snapshot_to_json(snapshot)
+
+    st.download_button(
+        label="Descargar JSON financiero",
+        data=json_payload,
+        file_name="afina_financial_snapshot.json",
+        mime="application/json"
+    )
+
+    with st.expander("Ver JSON financiero completo", expanded=False):
+        st.json(snapshot)
+
+    with st.expander("Alertas incluidas en el JSON", expanded=True):
+        if alerts:
+            st.dataframe(pd.DataFrame(alerts), width="stretch", hide_index=True)
+        else:
+            st.success("No se generaron alertas críticas en el snapshot.")
 
 
 def render_kpis_grouped_by_dimension(kpis_df):
@@ -1227,6 +1343,16 @@ if section == "1. Nuevo análisis FP&A":
     suggested_mapping = {}
 
     if uploaded_file is not None:
+        st.session_state.uploaded_file_name = uploaded_file.name
+
+        if not st.session_state.get("company_name"):
+            inferred_company = uploaded_file.name
+            for ext in [".xlsx", ".xls", ".csv", ".pdf"]:
+                inferred_company = inferred_company.replace(ext, "")
+            if inferred_company.endswith(" (1)"):
+                inferred_company = inferred_company[:-4]
+            st.session_state.company_name = inferred_company.strip() or "Empresa analizada"
+
         file_name_lower = uploaded_file.name.lower()
 
         if file_name_lower.endswith(".xlsx"):
@@ -1787,6 +1913,10 @@ elif section == "5. Chatbot AFINA":
 # 6. Informe
 # =========================
 elif section == "6. Informe":
+    if st.session_state.get("analysis_ready"):
+        render_financial_snapshot_section()
+        st.divider()
+
     section_header(
         "Informe financiero",
         "Generación de reportes ejecutivos descargables."
