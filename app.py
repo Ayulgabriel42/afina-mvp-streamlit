@@ -669,6 +669,179 @@ def render_financial_items_section():
 
 
 
+
+def render_kpis_grouped_by_dimension(kpis_df):
+    """
+    Renderiza el catálogo de KPIs agrupado por dimensiones FPA.
+    No recalcula KPIs: solo ordena y presenta la salida del motor kpi_engine.py.
+    """
+    if kpis_df is None or kpis_df.empty:
+        st.warning("No hay KPIs disponibles para agrupar por dimensión.")
+        return
+
+    if "Dimensión FPA" not in kpis_df.columns:
+        st.info("Los KPIs todavía no tienen dimensión FPA asignada.")
+        return
+
+    dimension_order = [
+        "Estructura de inversión",
+        "Capital de trabajo",
+        "Rentabilidad",
+        "Fluidez financiera",
+        "Equilibrio financiero",
+    ]
+
+    status_points = {
+        "Verde": 100,
+        "Amarillo": 50,
+        "Rojo": 0,
+        "Sin datos": 0,
+        "Sin umbral": 50,
+    }
+
+    st.subheader("KPIs agrupados por dimensión FPA")
+
+    st.markdown(
+        """
+        <div class="info-box">
+            <strong>Lectura por dimensión:</strong><br>
+            Esta vista organiza los 19 KPIs del catálogo FPA según su impacto financiero:
+            estructura, capital de trabajo, rentabilidad, fluidez y equilibrio financiero.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    for dimension in dimension_order:
+        dimension_df = kpis_df[kpis_df["Dimensión FPA"] == dimension].copy()
+
+        if dimension_df.empty:
+            continue
+
+        calculated_df = dimension_df[dimension_df["Fuente cálculo"] != "No calculado"].copy()
+
+        total = len(dimension_df)
+        calculated = len(calculated_df)
+        pending = total - calculated
+
+        green = int((dimension_df["Estado"] == "Verde").sum())
+        yellow = int((dimension_df["Estado"] == "Amarillo").sum())
+        red = int((dimension_df["Estado"] == "Rojo").sum())
+        no_data = int((dimension_df["Estado"] == "Sin datos").sum())
+
+        if calculated > 0:
+            calculated_df["Puntaje dimensión"] = calculated_df["Estado"].map(status_points).fillna(0)
+            dimension_score = round(calculated_df["Puntaje dimensión"].sum() / calculated, 1)
+        else:
+            dimension_score = 0
+
+        if dimension_score >= 75:
+            dimension_label = "Sólida"
+            card_color = "green"
+        elif dimension_score >= 50:
+            dimension_label = "Moderada"
+            card_color = "yellow"
+        elif calculated == 0:
+            dimension_label = "Sin datos"
+            card_color = "blue"
+        else:
+            dimension_label = "Crítica"
+            card_color = "red"
+
+        with st.expander(f"{dimension} · Score {dimension_score}% · {dimension_label}", expanded=True):
+            c1, c2, c3, c4, c5 = st.columns(5)
+
+            with c1:
+                kpi_card(
+                    "Score dimensión",
+                    f"{dimension_score}%",
+                    dimension_label,
+                    card_color,
+                    card_color
+                )
+
+            with c2:
+                kpi_card(
+                    "Calculados",
+                    calculated,
+                    f"de {total} KPIs",
+                    "green" if pending == 0 else "yellow",
+                    "green" if pending == 0 else "yellow"
+                )
+
+            with c3:
+                kpi_card(
+                    "Verdes",
+                    green,
+                    "Óptimos",
+                    "green",
+                    "green"
+                )
+
+            with c4:
+                kpi_card(
+                    "Amarillos",
+                    yellow,
+                    "Seguimiento",
+                    "yellow",
+                    "yellow"
+                )
+
+            with c5:
+                kpi_card(
+                    "Rojos / sin datos",
+                    red + no_data,
+                    "Alertas o faltantes",
+                    "red" if (red + no_data) > 0 else "green",
+                    "red" if (red + no_data) > 0 else "green"
+                )
+
+            visible_columns = [
+                "Código SRS",
+                "KPI",
+                "Valor formateado",
+                "Fórmula",
+                "Fuente cálculo",
+                "Estado cálculo",
+                "Estado",
+                "Lectura",
+                "Nota cálculo",
+            ]
+
+            available_columns = [
+                col for col in visible_columns
+                if col in dimension_df.columns
+            ]
+
+            st.dataframe(
+                dimension_df[available_columns],
+                width="stretch",
+                hide_index=True
+            )
+
+            if pending > 0:
+                pending_df = dimension_df[dimension_df["Fuente cálculo"] == "No calculado"].copy()
+
+                pending_columns = [
+                    "Código SRS",
+                    "KPI",
+                    "Partidas faltantes",
+                    "Nota cálculo",
+                ]
+
+                available_pending_columns = [
+                    col for col in pending_columns
+                    if col in pending_df.columns
+                ]
+
+                if not pending_df.empty:
+                    st.warning("KPIs pendientes de cálculo en esta dimensión:")
+                    st.dataframe(
+                        pending_df[available_pending_columns],
+                        width="stretch",
+                        hide_index=True
+                    )
+
 def render_kpi_visual_grid(show_table=True, show_trace=True):
     """
     Renderiza KPIs reales en formato visual.
@@ -895,6 +1068,9 @@ def render_kpi_executive_visuals(show_tables=True):
                     color,
                     color
                 )
+
+    # Vista agrupada por dimensiones FPA
+    render_kpis_grouped_by_dimension(kpis_df)
 
     st.subheader("Visualización ejecutiva")
 
