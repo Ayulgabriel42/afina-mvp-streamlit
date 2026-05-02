@@ -24,6 +24,8 @@ from src.statement_mapper import (
     calculate_mapping_completeness,
 )
 from src.financial_snapshot import build_financial_snapshot, snapshot_to_json
+from src.ai_insights import generate_ai_insights
+from src.report_builder import build_fpa_report_markdown
 
 # =========================
 # Configuración general
@@ -307,6 +309,8 @@ DEFAULTS = {
     "analysis_type": None,
     "uploaded_file_name": None,
     "company_name": None,
+    "ai_insights": None,
+    "ai_insights_model": None,
     "analysis_ready": False,
     "current_section": "1. Nuevo análisis FP&A"
 }
@@ -784,6 +788,143 @@ def render_financial_snapshot_section():
             st.dataframe(pd.DataFrame(alerts), width="stretch", hide_index=True)
         else:
             st.success("No se generaron alertas críticas en el snapshot.")
+
+
+
+def render_ai_insights_section():
+    """
+    Genera diagnóstico ejecutivo con IA a partir del JSON financiero estándar.
+    La llamada es manual para controlar costos.
+    """
+    snapshot = st.session_state.get("financial_snapshot")
+
+    if not snapshot:
+        st.info("Primero generá el JSON financiero estándar en esta misma sección.")
+        return
+
+    section_header(
+        "Síntesis consultiva con IA",
+        "Comentario ejecutivo breve generado desde el JSON financiero estándar de AFINA."
+    )
+
+    st.markdown(
+        """
+        <div class="warning-box">
+            <strong>Control de costo:</strong><br>
+            La IA se ejecuta solo al presionar el botón. El modelo inicial recomendado es <strong>gpt-5-mini</strong>.
+            Más adelante se podrá cambiar a <strong>gpt-5.2</strong> para informes finales premium.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    model = st.selectbox(
+        "Modelo OpenAI",
+        ["gpt-5-mini", "gpt-5-nano", "gpt-5.2"],
+        index=0,
+        help="Para pruebas usar gpt-5-mini o gpt-5-nano. Para informe final premium usar gpt-5.2."
+    )
+
+    col1, col2 = st.columns([1, 3])
+
+    with col1:
+        generate = st.button("Generar síntesis IA", type="primary")
+
+    with col2:
+        if st.session_state.get("ai_insights"):
+            st.success(f"Insights ya generados con {st.session_state.get('ai_insights_model')}.")
+
+    if generate:
+        try:
+            with st.spinner("AFINA está generando el diagnóstico ejecutivo con IA..."):
+                result = generate_ai_insights(snapshot, model=model)
+                st.session_state.ai_insights = result["output_text"]
+                st.session_state.ai_insights_model = result["model"]
+                st.session_state.ai_prompt_tokens_estimate = result["prompt_tokens_estimate"]
+
+            st.success("Insights generados correctamente.")
+        except Exception as e:
+            st.error(f"No se pudieron generar insights con IA: {e}")
+
+    if st.session_state.get("ai_insights"):
+        st.subheader("Síntesis consultiva generada")
+        st.markdown(st.session_state.ai_insights)
+
+        st.caption(
+            f"Modelo: {st.session_state.get('ai_insights_model')} · "
+            f"Estimación prompt tokens: {st.session_state.get('ai_prompt_tokens_estimate', 'N/D')}"
+        )
+
+        st.download_button(
+            label="Descargar síntesis IA en Markdown",
+            data=st.session_state.ai_insights,
+            file_name="afina_insights_ia.md",
+            mime="text/markdown"
+        )
+
+
+
+def render_fpa_report_template_section():
+    """
+    Construye un informe FP&A parametrizable en Markdown desde el JSON financiero estándar.
+    """
+    snapshot = st.session_state.get("financial_snapshot")
+
+    if not snapshot:
+        st.info("Primero generá el JSON financiero estándar.")
+        return
+
+    section_header(
+        "Template parametrizable de informe FP&A",
+        "Informe estructurado y reutilizable por cliente, industria y período."
+    )
+
+    st.markdown(
+        """
+        <div class="info-box">
+            <strong>Arquitectura del informe:</strong><br>
+            AFINA controla la estructura del reporte, los KPIs, scorecards, trazabilidad, alertas,
+            conclusiones y recomendaciones base. La IA se usa como insumo consultivo, no como motor de cálculo.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    include_ai = False
+
+    if st.session_state.get("ai_insights"):
+        include_ai = st.checkbox(
+            "Incluir comentario consultivo generado por IA",
+            value=True,
+            help="El informe mantiene estructura fija y agrega el diagnóstico IA como bloque complementario."
+        )
+    else:
+        st.info(
+            "Todavía no hay comentario IA generado. El informe puede construirse igualmente "
+            "con reglas, KPIs y JSON financiero."
+        )
+
+    if st.button("Generar informe FP&A en Markdown", type="primary"):
+        report_markdown = build_fpa_report_markdown(
+            snapshot,
+            ai_insights=st.session_state.get("ai_insights") if include_ai else None
+        )
+
+        st.session_state.fpa_report_markdown = report_markdown
+        st.success("Informe FP&A generado correctamente.")
+
+    if st.session_state.get("fpa_report_markdown"):
+        st.subheader("Vista previa del informe FP&A")
+
+        with st.expander("Ver informe completo en pantalla", expanded=True):
+            st.markdown(st.session_state.fpa_report_markdown)
+
+        st.download_button(
+            label="Descargar informe FP&A en Markdown",
+            data=st.session_state.fpa_report_markdown,
+            file_name="informe_fpa_afina.md",
+            mime="text/markdown"
+        )
 
 
 def render_kpis_grouped_by_dimension(kpis_df):
@@ -1915,6 +2056,10 @@ elif section == "5. Chatbot AFINA":
 elif section == "6. Informe":
     if st.session_state.get("analysis_ready"):
         render_financial_snapshot_section()
+        st.divider()
+        render_ai_insights_section()
+        st.divider()
+        render_fpa_report_template_section()
         st.divider()
 
     section_header(
