@@ -25,6 +25,7 @@ from src.statement_mapper import (
 )
 from src.financial_snapshot import build_financial_snapshot, snapshot_to_json
 from src.ai_insights import generate_ai_insights
+from src.afina_chatbot import generate_chatbot_response
 from src.report_builder import build_fpa_report_markdown
 
 # =========================
@@ -49,6 +50,7 @@ st.markdown(
             height: 2.75rem;
         }
 
+        
         div[data-testid="stToolbar"] {
             top: 0.5rem;
         }
@@ -311,6 +313,8 @@ DEFAULTS = {
     "company_name": None,
     "ai_insights": None,
     "ai_insights_model": None,
+    "chat_messages": [],
+    "chatbot_model": "gpt-5-mini",
     "analysis_ready": False,
     "current_section": "1. Nuevo análisis FP&A"
 }
@@ -1411,6 +1415,182 @@ def render_kpi_executive_visuals(show_tables=True):
             st.dataframe(kpis_df[available_trace_columns], width="stretch")
 
 
+
+
+def ensure_financial_snapshot_for_chatbot():
+    """
+    Construye o recupera el snapshot financiero para el chatbot.
+    """
+    if st.session_state.get("financial_snapshot"):
+        return st.session_state.financial_snapshot
+
+    if st.session_state.get("kpis") is None:
+        return None
+
+    source_file = (
+        st.session_state.get("uploaded_file_name")
+        or st.session_state.get("source_file")
+        or st.session_state.get("file_name")
+        or "Archivo financiero cargado"
+    )
+
+    company_name = st.session_state.get("company_name") or "Empresa analizada"
+
+    snapshot = build_financial_snapshot(
+        company_name=company_name,
+        source_file=source_file,
+        industry=st.session_state.get("selected_industry", "No especificada"),
+        period=st.session_state.get("analysis_period", "No especificado"),
+        analysis_type=st.session_state.get("analysis_type", "No especificado"),
+        kpis_df=st.session_state.get("kpis"),
+        kpis_summary=st.session_state.get("kpis_summary"),
+        financial_items_df=st.session_state.get("financial_items"),
+        financial_items_summary=st.session_state.get("financial_items_summary"),
+    )
+
+    st.session_state.financial_snapshot = snapshot
+    return snapshot
+
+
+def render_chatbot_afina_section():
+    section_header(
+        "Chatbot AFINA",
+        "Conversá con AFINA sobre los KPIs, alertas, dimensiones FP&A y trazabilidad del análisis generado."
+    )
+
+    if st.session_state.get("kpis") is None:
+        st.warning("Primero generá el análisis FP&A para que el chatbot tenga datos financieros disponibles.")
+        return
+
+    snapshot = ensure_financial_snapshot_for_chatbot()
+
+    if not snapshot:
+        st.warning("No se pudo construir el contexto financiero para el chatbot.")
+        return
+
+    context = snapshot.get("analysis_context", {})
+
+    st.markdown(
+        """
+        <div class="info-box">
+            <strong>Contexto activo:</strong><br>
+            El chatbot responde usando el JSON financiero validado por AFINA.
+            No recalcula KPIs ni inventa datos: interpreta los resultados ya generados por la app.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    col1, col2, col3 = st.columns([2, 2, 1])
+
+    with col1:
+        st.session_state.chatbot_model = st.selectbox(
+            "Modelo para el chatbot",
+            ["gpt-5-mini", "gpt-5-nano", "gpt-5.2"],
+            index=["gpt-5-mini", "gpt-5-nano", "gpt-5.2"].index(
+                st.session_state.get("chatbot_model", "gpt-5-mini")
+            ),
+        )
+
+    with col2:
+        st.caption(
+            f"Empresa: {context.get('company_name', 'No identificada')} · "
+            f"Industria: {context.get('industry', 'No especificada')} · "
+            f"Período: {context.get('period', 'No especificado')}"
+        )
+
+    with col3:
+        if st.button("Limpiar chat"):
+            st.session_state.chat_messages = []
+            st.rerun()
+
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    if not st.session_state.chat_messages:
+        st.session_state.chat_messages.append({
+            "role": "assistant",
+            "content": (
+                "Hola, soy AFINA. Ya tengo disponible el análisis financiero generado. "
+                "Podés preguntarme, por ejemplo: ¿cuál es el principal riesgo financiero?, "
+                "¿qué KPIs no se pudieron calcular?, ¿cómo está la liquidez?, "
+                "o ¿qué acciones debería priorizar?"
+            )
+        })
+
+    st.markdown("#### Preguntas sugeridas")
+
+    q1, q2, q3, q4 = st.columns(4)
+
+    suggested_question = None
+
+    with q1:
+        if st.button("Principal riesgo"):
+            suggested_question = "¿Cuál es el principal riesgo financiero detectado en este análisis?"
+
+    with q2:
+        if st.button("KPIs pendientes"):
+            suggested_question = "¿Qué KPIs no se pudieron calcular y por qué?"
+
+    with q3:
+        if st.button("Liquidez"):
+            suggested_question = "¿Cómo está la liquidez y qué señales debería mirar?"
+
+    with q4:
+        if st.button("Acciones sugeridas"):
+            suggested_question = "¿Qué acciones ejecutivas debería priorizar según este análisis?"
+
+    for message in st.session_state.chat_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    user_question = st.chat_input("Escribí tu consulta sobre el análisis financiero...")
+
+    if suggested_question:
+        user_question = suggested_question
+
+    if user_question:
+        st.session_state.chat_messages.append({
+            "role": "user",
+            "content": user_question,
+        })
+
+        with st.chat_message("user"):
+            st.markdown(user_question)
+
+        with st.chat_message("assistant"):
+            try:
+                with st.spinner("AFINA está analizando el contexto financiero..."):
+                    result = generate_chatbot_response(
+                        snapshot=snapshot,
+                        user_question=user_question,
+                        chat_history=st.session_state.chat_messages,
+                        model=st.session_state.get("chatbot_model", "gpt-5-mini"),
+                    )
+
+                answer = result["output_text"]
+                st.markdown(answer)
+
+                st.caption(
+                    f"Modelo: {result['model']} · "
+                    f"Tokens estimados de contexto: {result['prompt_tokens_estimate']}"
+                )
+
+                st.session_state.chat_messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                })
+
+            except Exception as e:
+                error_message = f"No se pudo generar la respuesta del chatbot. Detalle: {e}"
+                st.error(error_message)
+                st.session_state.chat_messages.append({
+                    "role": "assistant",
+                    "content": error_message,
+                })
+
+
+
 # =========================
 # Sidebar
 # =========================
@@ -2001,54 +2181,7 @@ elif section == "4. Proyecciones":
 # 5. Chatbot AFINA
 # =========================
 elif section == "5. Chatbot AFINA":
-    section_header(
-        "Chatbot AFINA",
-        "Asistente financiero contextualizado sobre los estados cargados."
-    )
-
-    if not st.session_state.analysis_ready:
-        st.markdown(
-            """
-            <div class="warning-box">
-                Primero debés preparar un análisis FP&A para que el chatbot tenga contexto financiero.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        context = st.session_state.fpna_context
-
-        st.markdown(
-            f"""
-            <div class="info-box">
-                <strong>Contexto activo del chatbot:</strong><br>
-                Archivo: {context["file_name"]}<br>
-                Período: {context["period"]}<br>
-                Tipo de análisis: {context["analysis_type"]}<br>
-                Industria: {context["industry"]}<br>
-                Estados mapeados: {len(st.session_state.fpna_documents)}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        pregunta = st.text_input(
-            "Hacé una pregunta financiera",
-            placeholder="Ejemplo: ¿por qué mi margen operativo está en rojo?"
-        )
-
-        if pregunta:
-            st.markdown(
-                """
-                <div class="info-box">
-                    <strong>Respuesta provisoria:</strong><br><br>
-                    En la siguiente etapa, AFINA responderá usando los estados financieros mapeados,
-                    KPIs calculados, industria seleccionada y período analizado.
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
+    render_chatbot_afina_section()
 
 # =========================
 # 6. Informe
