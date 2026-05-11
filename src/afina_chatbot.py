@@ -2,6 +2,7 @@ import json
 import os
 
 from openai import OpenAI
+
 from src.ai_insights import compact_snapshot_for_ai
 
 
@@ -10,6 +11,9 @@ DEFAULT_CHAT_MODEL = os.getenv(
     os.getenv("OPENAI_MODEL", "gpt-5-mini")
 )
 
+CHATBOT_MAX_OUTPUT_TOKENS = int(
+    os.getenv("OPENAI_CHAT_MAX_OUTPUT_TOKENS", "3500")
+)
 
 CHATBOT_SYSTEM_INSTRUCTIONS = """
 Sos AFINA, un chatbot financiero especializado en FP&A para empresas.
@@ -29,6 +33,14 @@ Reglas obligatorias:
 - Cuando respondas sobre riesgos o acciones, vinculalos a KPIs concretos cuando existan.
 - Evitá prometer auditoría, certificación contable o asesoramiento legal/fiscal definitivo.
 - Para recomendaciones o proyecciones, cerrá con un disclaimer breve.
+- No cortes la respuesta abruptamente. Cerrá siempre con una frase completa.
+
+Formato recomendado:
+1. Respuesta ejecutiva breve.
+2. Lectura financiera.
+3. Causas probables según KPIs disponibles.
+4. Acciones sugeridas.
+5. Cautela metodológica o disclaimer, si corresponde.
 """.strip()
 
 
@@ -70,7 +82,29 @@ Pregunta actual del usuario:
 {user_question}
 
 Respondé como Chatbot AFINA usando el contexto financiero anterior.
+La respuesta debe ser completa, ordenada y cerrar con una conclusión clara.
 """.strip()
+
+
+def _extract_output_text(response):
+    output_text = getattr(response, "output_text", None)
+
+    if output_text:
+        return output_text
+
+    try:
+        chunks = []
+
+        for item in getattr(response, "output", []) or []:
+            for content in getattr(item, "content", []) or []:
+                text = getattr(content, "text", None)
+                if text:
+                    chunks.append(text)
+
+        return "\n".join(chunks).strip()
+    except Exception:
+        return ""
+
 
 
 def generate_chatbot_response(snapshot, user_question, chat_history=None, model=None):
@@ -101,15 +135,37 @@ def generate_chatbot_response(snapshot, user_question, chat_history=None, model=
 
     client = OpenAI(api_key=api_key)
 
-    response = client.responses.create(
-        model=selected_model,
-        instructions=CHATBOT_SYSTEM_INSTRUCTIONS,
-        input=prompt,
-        max_output_tokens=1000,
-    )
+    response_kwargs = {
+        "model": selected_model,
+        "instructions": CHATBOT_SYSTEM_INSTRUCTIONS,
+        "input": prompt,
+        "max_output_tokens": CHATBOT_MAX_OUTPUT_TOKENS,
+    }
+
+    if str(selected_model).startswith("gpt-5"):
+        response_kwargs["reasoning"] = {"effort": "low"}
+        response_kwargs["text"] = {"verbosity": "medium"}
+
+    response = client.responses.create(**response_kwargs)
+
+    incomplete_reason = None
+
+    if getattr(response, "status", None) == "incomplete":
+        incomplete_details = getattr(response, "incomplete_details", None)
+        incomplete_reason = getattr(incomplete_details, "reason", None)
+
+    output_text = _extract_output_text(response)
+
+    if not output_text:
+        output_text = (
+            "AFINA no pudo recuperar una respuesta visible del modelo. "
+            "Probá nuevamente o aumentá OPENAI_CHAT_MAX_OUTPUT_TOKENS."
+        )
 
     return {
         "model": selected_model,
         "prompt_tokens_estimate": round((len(prompt) + len(CHATBOT_SYSTEM_INSTRUCTIONS)) / 4),
-        "output_text": response.output_text,
+        "max_output_tokens": CHATBOT_MAX_OUTPUT_TOKENS,
+        "incomplete_reason": incomplete_reason,
+        "output_text": output_text,
     }

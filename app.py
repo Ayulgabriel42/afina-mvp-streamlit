@@ -879,8 +879,8 @@ def render_fpa_report_template_section():
         return
 
     section_header(
-        "Template parametrizable de informe FP&A",
-        "Informe estructurado y reutilizable por cliente, industria y período."
+        "Informe FP&A",
+        "Vista previa en pantalla y descarga profesional PDF con semáforos visuales."
     )
 
     st.markdown(
@@ -908,7 +908,7 @@ def render_fpa_report_template_section():
             "con reglas, KPIs y JSON financiero."
         )
 
-    if st.button("Generar informe FP&A en Markdown", type="primary"):
+    if st.button("Generar informe FP&A", type="primary"):
         report_markdown = build_fpa_report_markdown(
             snapshot,
             ai_insights=st.session_state.get("ai_insights") if include_ai else None
@@ -924,11 +924,29 @@ def render_fpa_report_template_section():
             st.markdown(st.session_state.fpa_report_markdown)
 
         st.download_button(
-            label="Descargar informe FP&A en Markdown",
+            label="Descargar versión Markdown",
             data=st.session_state.fpa_report_markdown,
             file_name="informe_fpa_afina.md",
             mime="text/markdown"
         )
+        try:
+            from src.pdf_report_builder import build_fpa_report_pdf
+        
+            pdf_bytes = build_fpa_report_pdf(
+                snapshot,
+                ai_insights=st.session_state.get("ai_insights") if include_ai else None,
+            )
+        
+            st.download_button(
+                label="Descargar informe FP&A en PDF",
+                data=pdf_bytes,
+                file_name="informe_fpa_afina.pdf",
+                mime="application/pdf",
+                help="Genera un PDF dinamico profesional, sin emojis, con paleta AFINA y semaforos.",
+            )
+        except Exception as e:
+            st.error(f"No se pudo generar el PDF profesional: {e}")
+
 
 
 def render_kpis_grouped_by_dimension(kpis_df):
