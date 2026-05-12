@@ -383,7 +383,7 @@ def build_methodological_notes(kpis_df):
         "Los KPIs son calculados por el motor determinístico de AFINA a partir de partidas FP&A detectadas.",
         "La IA debe interpretar los resultados, no recalcular indicadores financieros principales.",
         "Los indicadores sin datos no deben ser inventados; deben informarse como pendientes de validación.",
-        "Los semáforos actuales usan umbrales generales. En una versión posterior se aplicarán thresholds por industria.",
+        "Los semáforos se calculan con thresholds configurados según la industria seleccionada por el usuario.",
     ]
 
     if kpis_df is not None and not kpis_df.empty:
