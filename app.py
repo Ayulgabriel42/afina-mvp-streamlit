@@ -1,4 +1,5 @@
 import streamlit as st
+from copy import deepcopy
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -37,6 +38,34 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+
+st.markdown(
+    '''
+    <style>
+    [data-testid="stSidebar"] button[kind="primary"] {
+        background: linear-gradient(135deg, #1D4ED8 0%, #0B1F3A 100%);
+        color: white !important;
+        border: 1px solid #2563EB;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+
+    [data-testid="stSidebar"] button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #2563EB 0%, #0F2D52 100%);
+        color: white !important;
+        border: 1px solid #38BDF8;
+    }
+
+    [data-testid="stSidebar"] button[kind="primary"] p {
+        color: white !important;
+        font-weight: 600;
+    }
+    </style>
+    ''',
+    unsafe_allow_html=True
+)
+
 
 # =========================
 # Estilos visuales
@@ -316,12 +345,70 @@ DEFAULTS = {
     "chat_messages": [],
     "chatbot_model": "gpt-5-mini",
     "analysis_ready": False,
-    "current_section": "1. Nuevo análisis FP&A"
+    "current_section": "1. Nuevo análisis FP&A",
+    "analysis_reset_counter": 0
 }
 
 for key, value in DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = value
+
+# =========================
+# Limpieza de análisis
+# =========================
+ANALYSIS_STATE_KEYS = [
+    "workbook_sheets",
+    "sheet_mapping",
+    "fpna_documents",
+    "fpna_context",
+    "mapping_completeness",
+    "financial_items",
+    "financial_items_summary",
+    "kpis",
+    "kpis_summary",
+    "analysis_period",
+    "comparison_period",
+    "analysis_type",
+    "uploaded_file_name",
+    "source_file",
+    "file_name",
+    "company_name",
+    "ai_insights",
+    "ai_insights_model",
+    "ai_prompt_tokens_estimate",
+    "chat_messages",
+    "analysis_ready",
+    "financial_snapshot",
+    "fpa_report_markdown",
+]
+
+
+def reset_analysis_state():
+    """
+    Limpia datos derivados de un análisis anterior sin modificar widgets ya instanciados.
+    También incrementa analysis_reset_counter para forzar a Streamlit a limpiar el file_uploader.
+    """
+    current_counter = int(st.session_state.get("analysis_reset_counter", 0))
+
+    # Claves de widgets que NO deben tocarse después de instanciarse
+    protected_keys = {"current_section"}
+
+    for key in ANALYSIS_STATE_KEYS:
+        if key in st.session_state and key not in protected_keys:
+            del st.session_state[key]
+
+    # Limpiar selects dinámicos de mapeo de hojas
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("mapping_"):
+            del st.session_state[key]
+
+    # Restaurar defaults principales, excepto keys protegidas
+    for key, value in DEFAULTS.items():
+        if key not in protected_keys:
+            st.session_state[key] = deepcopy(value)
+
+    st.session_state.analysis_reset_counter = current_counter + 1
+
 
 NAV_OPTIONS = [
     "1. Nuevo análisis FP&A",
@@ -1634,6 +1721,18 @@ with st.sidebar:
 
     st.divider()
 
+    if st.button(
+        "Limpiar análisis",
+        type="primary",
+        use_container_width=True,
+        help="Borra archivo, mapeos, KPIs, snapshot, informe, insights IA y chat de la sesión actual."
+    ):
+        reset_analysis_state()
+        st.rerun()
+
+    st.caption("Usar antes de cargar otro archivo para evitar datos viejos.")
+    st.divider()
+
     if st.session_state.analysis_ready:
         st.success("Análisis activo")
         st.caption(f"Período: {st.session_state.analysis_period}")
@@ -1675,7 +1774,8 @@ if section == "1. Nuevo análisis FP&A":
 
     uploaded_file = st.file_uploader(
         "1. Seleccioná el archivo financiero",
-        type=["xlsx", "csv"]
+        type=["xlsx", "csv"],
+        key=f"financial_file_uploader_{st.session_state.analysis_reset_counter}",
     )
 
     sheet_names = []
@@ -1930,7 +2030,7 @@ if section == "1. Nuevo análisis FP&A":
 
         st.button(
             "Ir al Dashboard financiero",
-            type="secondary",
+            type="primary",
             on_click=go_to,
             args=("2. Dashboard financiero",)
         )

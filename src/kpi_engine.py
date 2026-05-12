@@ -575,3 +575,12 @@ def calculate_kpis(financial_items_df, industry="Sector Químico"):
     }
 
     return kpis_df, summary
+
+# === AFINA THRESHOLDS INTEGRATION ===
+# Integración no invasiva:
+# reemplaza en runtime la función hardcodeada evaluate_kpi_status por la versión
+# centralizada en thresholds.py. Si falla la importación, queda el fallback anterior.
+try:
+    from src.thresholds import evaluate_kpi_status as evaluate_kpi_status
+except Exception:
+    pass

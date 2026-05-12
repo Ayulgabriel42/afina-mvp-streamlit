@@ -484,9 +484,9 @@ def build_fpa_report_markdown(snapshot, ai_insights=None):
     lines.append("")
     lines.append("1. Validar las partidas detectadas con el equipo contable o financiero.")
     lines.append("2. Incorporar análisis histórico para completar columnas de tendencia.")
-    lines.append("3. Definir thresholds por industria para mejorar precisión del semáforo.")
-    lines.append("4. Integrar generación de PDF y Word desde este template Markdown.")
-    lines.append("5. Incorporar chatbot contextual sobre el informe y el JSON financiero.")
+    lines.append("3. Validar periódicamente los thresholds por industria contra benchmarks financieros reales.")
+    lines.append("4. Continuar mejorando la presentación profesional del PDF y Word.")
+    lines.append("5. Profundizar el chatbot contextual sobre el informe y el JSON financiero.")
     lines.append("6. Preparar escenarios y proyecciones financieras automatizadas.")
     lines.append("")
 
